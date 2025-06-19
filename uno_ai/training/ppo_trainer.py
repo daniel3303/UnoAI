@@ -373,7 +373,7 @@ class PPOTrainer:
 
     def load_model(self, filepath: str):
         """Load model checkpoint"""
-        checkpoint = torch.load(filepath, map_location=self.device)
+        checkpoint = torch.load(filepath, map_location=self.device, weights_only=False) # Allow more than weights because config claasses are also saved in the checkpoint
         self.agent.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
         self.vocab_size = checkpoint.get('vocab_size', UNOTokens.VOCAB_SIZE)
