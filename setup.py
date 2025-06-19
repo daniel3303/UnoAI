@@ -39,7 +39,7 @@ setup(
 
             # Multi-agent training scripts
             "uno-train-multi-agent=uno_ai.training.train_multi_agent_ppo:main",
-            "uno-train-parallel=uno_ai.training.train_parallel_multi_agent_ppo:main",
+            "uno-train-multi-agent-parallel=uno_ai.training.train_parallel_multi_agent_ppo:main",
 
             # Evaluation and demo scripts
             "uno-evaluate=uno_ai.training.evaluate:main",

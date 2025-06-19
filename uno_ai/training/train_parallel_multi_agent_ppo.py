@@ -7,8 +7,8 @@ def main():
     import torch
 
     parser = argparse.ArgumentParser(description="Train UNO AI with parallel environments")
-    parser.add_argument("--multiprocess", action="store_true",
-                        help="Use true multiprocessing (default: sequential)")
+    parser.add_argument("--multiprocess", action="store_true", default=True,
+                        help="Use true multiprocessing (default: True)")
     parser.add_argument("--num-envs", type=int, default=4,
                         help="Number of parallel environments")
     parser.add_argument("--timesteps", type=int, default=1_000_000,

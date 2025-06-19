@@ -34,10 +34,7 @@ A UNO card game implementation with AI agents trained using Proximal Policy Opti
 git clone https://github.com/daniel3303/UnoAI.git
 cd UnoAI
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Install the package
+# Install the package and requirements
 pip install -e .
 ```
 
@@ -51,8 +48,8 @@ uno-train-ppo
 # Multi-agent training with self-play
 uno-train-multi-agent
 
-# Parallel training (recommended for faster training)
-uno-train-parallel --num-envs 8 --timesteps 2000000
+# Multi-agent parallel training (recommended)
+uno-train-multi-agent-parallel --num-envs 8 --timesteps 2000000
 ```
 
 #### Evaluate Trained Models
