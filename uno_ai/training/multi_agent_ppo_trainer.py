@@ -238,7 +238,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
     
                 if self.buffer.ptr >= self.config.buffer_size:
                     # Store current episode metrics even if not done
-                    if episode_reward > 0 or episode_length > 0:
+                    if episode_reward != 0 or episode_length > 0:
                         self.episode_rewards.append(episode_reward)
                         self.episode_lengths.append(episode_length)
     
