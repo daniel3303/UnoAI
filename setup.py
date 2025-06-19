@@ -41,8 +41,7 @@ setup(
             "uno-train-multi-agent=uno_ai.training.train_multi_agent_ppo:main",
 
             # Evaluation and demo scripts
-            "uno-evaluate=uno_ai.training.evaluate:main",
-            "uno-demo=uno_ai.training.demo:main",
+            "uno-evaluate=uno_ai.evaluation.evaluate:main",
         ],
     },
     package_data={

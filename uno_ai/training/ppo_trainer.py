@@ -7,8 +7,6 @@ import torch
 import torch.nn as nn
 
 from uno_ai.environment.uno_env import UNOEnv
-from uno_ai.model.uno_transformer import UNOTokens
-from uno_ai.training.ppo_agent import PPOAgent
 from uno_ai.training.ppo_config import PPOConfig
 from uno_ai.training.reward_calculator import RewardCalculator
 

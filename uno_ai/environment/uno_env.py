@@ -1,50 +1,50 @@
-import os
+import math
 import sys
-from typing import Dict, List, Optional, Tuple, Any
+from typing import Dict, List, Optional, Tuple
+
 import gymnasium as gym
+import numpy as np
 import pygame
 from gymnasium import spaces
-import numpy as np
-import math
-import time
 
-from uno_ai.environment.uno_game import UNOGame, Card, CardColor, CardType
-from uno_ai.model.uno_transformer import UNOTokens
+from uno_ai.environment.uno_game import UNOGame, Card, CardColor, CardType, GameMode
+from uno_ai.environment.uno_vocabulary import UNOVocabulary
 from uno_ai.utils.asset_manager import AssetManager
 
-class UNOEnv(gym.Env):
-    def __init__(self, num_players: int = 4, render_mode: Optional[str] = None):
-        super().__init__()
 
+class UNOEnv(gym.Env):
+    def __init__(self, num_players: int = 4, game_mode=None, render_mode: Optional[str] = None):
+        super().__init__()
         self.num_players = num_players
+        self.game_mode = game_mode if game_mode is not None else GameMode.NORMAL
         self.render_mode = render_mode
         self.game: Optional[UNOGame] = None
-
+        
         # Use token-based action space
-        self.action_space = spaces.Discrete(UNOTokens.VOCAB_SIZE)
-
+        self.action_space = spaces.Discrete(UNOVocabulary.VOCAB_SIZE)
+        
         # Observation space: sequence of tokens using same vocabulary
         max_seq_len = 1000
         self.observation_space = spaces.Box(
-            low=0, high=UNOTokens.VOCAB_SIZE-1, shape=(max_seq_len,), dtype=np.int32
+            low=0, high=UNOVocabulary.VOCAB_SIZE - 1, shape=(max_seq_len,), dtype=np.int32
         )
-
+        
         # Initialize asset manager
         self.asset_manager = AssetManager()
-
+        
         # Initialize pygame if rendering
         if render_mode == "human":
             self._init_pygame()
 
     def create_action_mask(self, current_player: int) -> Tuple[np.ndarray, Dict[int, int]]:
         """Create action mask and token-to-hand-index mapping for current game state"""
-        mask = np.zeros(UNOTokens.VOCAB_SIZE, dtype=bool)
+        mask = np.zeros(UNOVocabulary.VOCAB_SIZE, dtype=bool)
         token_to_hand_index = {}
 
         if not self.game:
             # Fallback - only allow draw action
-            mask[UNOTokens.DRAW_ACTION] = True
-            token_to_hand_index[UNOTokens.DRAW_ACTION] = -1
+            mask[UNOVocabulary.DRAW_ACTION] = True
+            token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1
             return mask, token_to_hand_index
 
         # Get current player's hand
@@ -55,13 +55,13 @@ class UNOEnv(gym.Env):
         for hand_index in valid_card_indices:
             if hand_index < len(hand):
                 card = hand[hand_index]
-                card_token = UNOTokens.card_to_token(card)
+                card_token = UNOVocabulary.card_to_token(card)
                 mask[card_token] = True
                 token_to_hand_index[card_token] = hand_index
 
         # Always enable draw action
-        mask[UNOTokens.DRAW_ACTION] = True
-        token_to_hand_index[UNOTokens.DRAW_ACTION] = -1  # Special indicator for draw
+        mask[UNOVocabulary.DRAW_ACTION] = True
+        token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1  # Special indicator for draw
 
         return mask, token_to_hand_index
 
@@ -140,13 +140,13 @@ class UNOEnv(gym.Env):
         # Load assets with scaled dimensions
         self.asset_manager.load_assets(self.card_width, self.card_height)
 
-    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
+    def reset(self, seed: Optional[int] = None, game_mode: Optional[GameMode] = None) -> Tuple[np.ndarray, Dict]:
         super().reset(seed=seed)
-
-        self.game = UNOGame(self.num_players)
+    
+        self.game = UNOGame(self.num_players, self.game_mode if game_mode is None else game_mode)
         obs = self._get_observation()
         info = self.game.get_game_state()
-
+    
         return obs, info
 
     def step(self, action_token: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
@@ -167,7 +167,7 @@ class UNOEnv(gym.Env):
         action_mask, token_to_hand_index = self.create_action_mask(current_player)
 
         try:
-            if action_token == UNOTokens.DRAW_ACTION:
+            if action_token == UNOVocabulary.DRAW_ACTION:
                 # Draw card action
                 result = self.game.draw_card(current_player)
 
@@ -232,38 +232,54 @@ class UNOEnv(gym.Env):
     def _get_observation(self) -> np.ndarray:
         """Convert game state to observation tokens"""
         tokens = []
-
+    
         if self.game:
-            # Add game history (last few cards)
-            history = self.game.discard_pile[-10:]
-            for card in history:
+            # The first token is always the game mode
+            game_mode_token = UNOVocabulary.game_mode_to_token(self.game.game_mode)
+            tokens.append(game_mode_token)
+    
+            # Current player number
+            current_player_tokens = UNOVocabulary.number_to_tokens(self.game.current_player)
+            tokens.extend(current_player_tokens)
+            tokens.append(UNOVocabulary.PAD)
+    
+            # Add all players' hand sizes using OPPONENT token format
+            for i in range(self.num_players):
+                tokens.append(UNOVocabulary.OPPONENT)
+                player_tokens = UNOVocabulary.number_to_tokens(i)
+                tokens.extend(player_tokens)
+                tokens.append(UNOVocabulary.PAD)
+    
+                hand_size = len(self.game.players_hands[i])
+                hand_size_tokens = UNOVocabulary.number_to_tokens(hand_size)
+                tokens.extend(hand_size_tokens)
+                tokens.append(UNOVocabulary.PAD)
+    
+            # Card play history with player identification
+            for player_id, card in self.game.discard_pile_with_players:
+                tokens.append(UNOVocabulary.OPPONENT)
+                player_tokens = UNOVocabulary.number_to_tokens(player_id)
+                tokens.extend(player_tokens)
                 tokens.append(self._card_to_token(card))
-
-            # Add current player's hand directly - no separators or complex encoding
+            tokens.append(UNOVocabulary.PAD)
+    
+            # Add current player's hand
             current_player = self.game.current_player
             for card in self.game.players_hands[current_player]:
                 tokens.append(self._card_to_token(card))
-
-            # Add other players' hand sizes as simple counts using card tokens
-            # We'll represent hand size by repeating PAD tokens (simple but valid)
-            for i in range(self.num_players):
-                if i != current_player:
-                    hand_size = min(len(self.game.players_hands[i]), 10)  # Cap at 10 for efficiency
-                    for _ in range(hand_size):
-                        tokens.append(UNOTokens.PAD)
-
+    
         # Pad to fixed length
         max_len = self.observation_space.shape[0]
         if len(tokens) > max_len:
             tokens = tokens[:max_len]
         else:
-            tokens.extend([UNOTokens.PAD] * (max_len - len(tokens)))
-
+            tokens.extend([UNOVocabulary.PAD] * (max_len - len(tokens)))
+    
         return np.array(tokens, dtype=np.int32)
 
     def _card_to_token(self, card: Card) -> int:
         """Convert card to token ID using the standardized UNO token system"""
-        return UNOTokens.card_to_token(card)
+        return UNOVocabulary.card_to_token(card)
 
     def _number_to_tokens(self, number: int) -> List[int]:
         """Convert number to digit tokens"""
@@ -286,7 +302,7 @@ class UNOEnv(gym.Env):
         action_mask, _ = self.create_action_mask(current_player)
 
         # Return list of valid tokens
-        return [i for i in range(UNOTokens.VOCAB_SIZE) if action_mask[i]]
+        return [i for i in range(UNOVocabulary.VOCAB_SIZE) if action_mask[i]]
 
     def render(self) -> None:
         if self.render_mode == "human" and self.game:
@@ -466,8 +482,6 @@ class UNOEnv(gym.Env):
 
         # Player name
         player_name = f"PLAYER {player_id + 1}"
-        if is_current:
-            player_name += " <--"
 
         name_color = self.accent_color if is_current else self.text_color
         name_surface = self.font_medium.render(player_name, True, name_color)

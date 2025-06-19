@@ -2,8 +2,8 @@ from typing import Optional
 
 from torch import Tensor, nn
 
-from uno_ai.model.multi_head_attention import MultiHeadAttention
-from uno_ai.model.swi_glu import SwiGLU
+from uno_ai.layers.multi_head_attention import MultiHeadAttention
+from uno_ai.layers.swi_glu import SwiGLU
 
 
 class TransformerBlock(nn.Module):

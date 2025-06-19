@@ -4,11 +4,11 @@ from collections import deque
 import numpy as np
 import torch
 
+from uno_ai.agents.ppo_agent import PPOAgent
 from uno_ai.environment.multi_agent_uno_env import MultiAgentUNOEnv, OpponentConfig
-from uno_ai.model.uno_transformer import UNOTokens
+from uno_ai.model.vocabulary import UNOTokens
 from uno_ai.training.multi_agent_config import MultiAgentTrainingConfig, TrainingScenario
 from uno_ai.training.ppo_config import PPOConfig
-from uno_ai.training.ppo_trainer import PPOAgent
 from uno_ai.training.ppo_trainer import PPOTrainer, PPOBuffer, RewardCalculator
 
 logger = logging.getLogger(__name__)

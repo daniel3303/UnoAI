@@ -7,11 +7,11 @@ import numpy as np
 import torch
 
 from uno_ai.environment.uno_env import UNOEnv
-from uno_ai.model.uno_transformer import UNOTokens
+from uno_ai.environment.uno_vocabulary import UNOVocabulary
 
 
 @dataclass
-class OpponentConfig:
+class  OpponentConfig:
     agent_players: List[int]  # Which players are trained agents
     random_players: List[int]  # Which players are random
     env_players: List[int]    # Which players use environment logic
@@ -21,7 +21,7 @@ class MultiAgentUNOEnv(UNOEnv):
         super().__init__(num_players, render_mode)
         self.opponent_config: Optional[OpponentConfig] = None
         self.trained_agents: Dict[int, Any] = {}  # Store multiple agent instances
-        self.vocab_size = UNOTokens.VOCAB_SIZE
+        self.vocab_size = UNOVocabulary.VOCAB_SIZE
 
     def set_opponent_config(self, config: OpponentConfig):
         """Set the current opponent configuration"""
@@ -73,7 +73,7 @@ class MultiAgentUNOEnv(UNOEnv):
     def _get_random_valid_action(self, player_id: int) -> int:
         """Get random valid action token"""
         if not self.game:
-            return UNOTokens.DRAW_ACTION
+            return UNOVocabulary.DRAW_ACTION
 
         try:
             action_mask, _ = self.create_action_mask(player_id)
@@ -82,23 +82,23 @@ class MultiAgentUNOEnv(UNOEnv):
             if valid_tokens:
                 return random.choice(valid_tokens)
             else:
-                return UNOTokens.DRAW_ACTION
+                return UNOVocabulary.DRAW_ACTION
 
         except Exception as e:
             print(f"Error getting random action for player {player_id}: {e}")
-            return UNOTokens.DRAW_ACTION
+            return UNOVocabulary.DRAW_ACTION
 
     def _get_env_action(self, player_id: int) -> int:
         """Get action using simple heuristics"""
         if not self.game:
-            return UNOTokens.DRAW_ACTION
+            return UNOVocabulary.DRAW_ACTION
 
         try:
             action_mask, token_to_hand_index = self.create_action_mask(player_id)
             valid_tokens = [i for i in range(len(action_mask)) if action_mask[i]]
 
             if not valid_tokens:
-                return UNOTokens.DRAW_ACTION
+                return UNOVocabulary.DRAW_ACTION
 
             # Simple heuristic: prefer special cards, then high numbers
             hand = self.game.players_hands[player_id]
@@ -106,7 +106,7 @@ class MultiAgentUNOEnv(UNOEnv):
             best_score = -1
 
             for token in valid_tokens:
-                if token == UNOTokens.DRAW_ACTION:
+                if token == UNOVocabulary.DRAW_ACTION:
                     continue  # Skip draw action unless no other choice
 
                 if token in token_to_hand_index:
@@ -122,7 +122,7 @@ class MultiAgentUNOEnv(UNOEnv):
 
         except Exception as e:
             print(f"Error getting env action for player {player_id}: {e}")
-            return UNOTokens.DRAW_ACTION
+            return UNOVocabulary.DRAW_ACTION
 
     def _calculate_card_score(self, card) -> int:
         """Simple card scoring for environment players"""
@@ -142,8 +142,8 @@ class MultiAgentUNOEnv(UNOEnv):
 
         if not self.game:
             # Fallback - only allow draw action
-            mask[UNOTokens.DRAW_ACTION] = True
-            token_to_hand_index[UNOTokens.DRAW_ACTION] = -1
+            mask[UNOVocabulary.DRAW_ACTION] = True
+            token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1
             return mask, token_to_hand_index
 
         try:
@@ -155,18 +155,18 @@ class MultiAgentUNOEnv(UNOEnv):
             for hand_index in valid_card_indices:
                 if hand_index < len(hand):
                     card = hand[hand_index]
-                    card_token = UNOTokens.card_to_token(card)
+                    card_token = UNOVocabulary.card_to_token(card)
                     mask[card_token] = True
                     token_to_hand_index[card_token] = hand_index
 
             # Always enable draw action
-            mask[UNOTokens.DRAW_ACTION] = True
-            token_to_hand_index[UNOTokens.DRAW_ACTION] = -1  # Special indicator for draw
+            mask[UNOVocabulary.DRAW_ACTION] = True
+            token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1  # Special indicator for draw
 
         except Exception as e:
             print(f"Error creating action mask for player {player_id}: {e}")
             # Fallback to just draw action
-            mask[UNOTokens.DRAW_ACTION] = True
-            token_to_hand_index[UNOTokens.DRAW_ACTION] = -1
+            mask[UNOVocabulary.DRAW_ACTION] = True
+            token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1
 
         return mask, token_to_hand_index

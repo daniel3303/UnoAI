@@ -5,7 +5,7 @@ from torch import Tensor
 from torch import nn
 from torch.nn import functional as F
 
-from uno_ai.model.rope_embedding import RoPEEmbedding
+from uno_ai.layers.rope_embedding import RoPEEmbedding
 
 
 class MultiHeadAttention(nn.Module):
