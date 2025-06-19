@@ -266,7 +266,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
             win_rate = np.mean(self.episode_wins) if self.episode_wins else 0
             
             print(f"Update {update_count:4d} | Steps: {timesteps_collected:8,}/{total_timesteps:,} | "
-                  f"Players: {self.current_num_players} | "
+                  f"Players: {self.current_num_players} ({self.env.opponent_config.agent_players}A {self.env.opponent_config.env_players}E {self.env.opponent_config.random_players}R) | "
                   f"Reward: {avg_reward:6.2f} | Game Length: {avg_length:5.1f} | Win Rate: {win_rate:.3f}")
             
             # Print scenario statistics every 40 updates
