@@ -27,7 +27,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
 
         # Training configuration
         self.training_config = MultiAgentTrainingConfig()
-        
+    
         self.scenario_stats = {}
 
 
@@ -55,6 +55,10 @@ class MultiAgentPPOTrainer(PPOTrainer):
         )
 
         self.env.set_opponent_config(opponent_config)
+
+        # Add the current agent to all agent player positions
+        for player_id in scenario.agent_players:
+            self.env.set_trained_agent(player_id, self.agent)
 
 
     def collect_rollouts(self):

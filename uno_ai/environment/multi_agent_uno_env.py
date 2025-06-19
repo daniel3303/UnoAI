@@ -1,4 +1,4 @@
-# ./uno_ai/environment/multi_agent_uno_env.py
+import logging
 import random
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
@@ -7,9 +7,11 @@ import numpy as np
 import torch
 
 from uno_ai.environment.uno_env import UNOEnv
-from uno_ai.environment.uno_game import GameMode
+from uno_ai.environment.uno_game import GameMode, CardType
 from uno_ai.environment.uno_vocabulary import UNOVocabulary
 
+
+logger = logging.getLogger(__name__)
 
 @dataclass
 class  OpponentConfig:
@@ -28,8 +30,8 @@ class MultiAgentUNOEnv(UNOEnv):
         """Set the current opponent configuration"""
         self.opponent_config = config
 
-    def add_trained_agent(self, player_id: int, agent):
-        """Add a trained agent for a specific player"""
+    def set_trained_agent(self, player_id: int, agent):
+        """Set a trained agent for a specific player"""
         self.trained_agents[player_id] = agent
 
     def get_action_for_player(self, player_id: int, obs) -> int:
@@ -42,6 +44,7 @@ class MultiAgentUNOEnv(UNOEnv):
             if player_id in self.trained_agents:
                 return self._get_agent_action(player_id, obs)
             else:
+                logger.error(f"Player {player_id} is not in the trained agents list.")
                 return self._get_random_valid_action(player_id)
 
         elif player_id in self.opponent_config.random_players:
@@ -127,8 +130,6 @@ class MultiAgentUNOEnv(UNOEnv):
 
     def _calculate_card_score(self, card) -> int:
         """Simple card scoring for environment players"""
-        from uno_ai.environment.uno_game import CardType
-
         if card.type in [CardType.WILD, CardType.WILD_DRAW_FOUR]:
             return 100
         elif card.type in [CardType.SKIP, CardType.REVERSE, CardType.DRAW_TWO]:

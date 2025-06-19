@@ -49,7 +49,7 @@ class UNOEvaluator:
 
         # Add trained agents to environment
         for player_id, agent in self.agents.items():
-            env.add_trained_agent(player_id, agent)
+            env.set_trained_agent(player_id, agent)
 
         total_rewards = []
         win_rates = []
