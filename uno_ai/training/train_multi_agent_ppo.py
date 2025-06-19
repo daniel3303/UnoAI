@@ -11,7 +11,7 @@ def main():
     )
 
     trainer = MultiAgentPPOTrainer(config)
-    trainer.train(total_timesteps=2_000_000)
+    trainer.train(total_timesteps=4_000_000)
     trainer.save_model("uno_multi_agent_final.pt")
 
 if __name__ == "__main__":
