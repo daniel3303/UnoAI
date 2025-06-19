@@ -6,9 +6,12 @@ import numpy as np
 
 from uno_ai.agents.ppo_agent import PPOAgent
 from uno_ai.environment.multi_agent_uno_env import MultiAgentUNOEnv, OpponentConfig
+from uno_ai.environment.uno_game import GameMode
+
 
 class UNOEvaluator:
-    def __init__(self, num_players: int = 4, model_paths: Optional[List[str]] = None):
+    def __init__(self, num_players: int = 4, game_mode: GameMode = GameMode.NORMAL, model_paths: Optional[List[str]] = None):
+        self.game_mode = game_mode
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.num_players = num_players
         self.agents = {}
@@ -31,7 +34,7 @@ class UNOEvaluator:
     def evaluate(self, num_episodes: int = 100, render: bool = False, delay: float = 1):
         """Evaluate the configured players"""
         # Use multi-agent environment
-        env = MultiAgentUNOEnv(num_players=self.num_players, render_mode="human" if render else None)
+        env = MultiAgentUNOEnv(num_players=self.num_players, game_mode=self.game_mode, render_mode="human" if render else None)
 
         # Configure which players use trained agents vs environment players
         agent_players = list(self.agents.keys())

@@ -13,10 +13,10 @@ from uno_ai.utils.asset_manager import AssetManager
 
 
 class UNOEnv(gym.Env):
-    def __init__(self, num_players: int = 4, game_mode=None, render_mode: Optional[str] = None):
+    def __init__(self, num_players: int = 4, game_mode:GameMode = GameMode.NORMAL, render_mode: Optional[str] = None):
         super().__init__()
         self.num_players = num_players
-        self.game_mode = game_mode if game_mode is not None else GameMode.NORMAL
+        self.game_mode = game_mode
         self.render_mode = render_mode
         self.game: Optional[UNOGame] = None
         
@@ -40,29 +40,43 @@ class UNOEnv(gym.Env):
         """Create action mask and token-to-hand-index mapping for current game state"""
         mask = np.zeros(UNOVocabulary.VOCAB_SIZE, dtype=bool)
         token_to_hand_index = {}
-
+    
         if not self.game:
             # Fallback - only allow draw action
             mask[UNOVocabulary.DRAW_ACTION] = True
             token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1
             return mask, token_to_hand_index
-
-        # Get current player's hand
-        hand = self.game.players_hands[current_player]
-        valid_card_indices = self.game.get_valid_actions(current_player)
-
-        # Enable tokens for valid cards in hand
-        for hand_index in valid_card_indices:
-            if hand_index < len(hand):
-                card = hand[hand_index]
-                card_token = UNOVocabulary.card_to_token(card)
-                mask[card_token] = True
-                token_to_hand_index[card_token] = hand_index
-
-        # Always enable draw action
-        mask[UNOVocabulary.DRAW_ACTION] = True
-        token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1  # Special indicator for draw
-
+    
+        try:
+            # Get current player's hand
+            hand = self.game.players_hands[current_player]
+            valid_card_indices = self.game.get_valid_actions(current_player)
+    
+            # Enable tokens for valid cards in hand
+            for hand_index in valid_card_indices:
+                if hand_index < len(hand):
+                    card = hand[hand_index]
+                    card_token = UNOVocabulary.card_to_token(card)
+                    mask[card_token] = True
+                    token_to_hand_index[card_token] = hand_index
+    
+            # Always enable draw action
+            mask[UNOVocabulary.DRAW_ACTION] = True
+            token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1  # Special indicator for draw
+    
+            # Enable pass action in normal rules after drawing a playable card
+            if (self.game.game_mode == GameMode.NORMAL and
+                    hasattr(self, '_last_draw_result') and
+                    self._last_draw_result.get("must_play_or_pass", False)):
+                mask[UNOVocabulary.PASS_ACTION] = True
+                token_to_hand_index[UNOVocabulary.PASS_ACTION] = -2
+    
+        except Exception as e:
+            print(f"Error creating action mask for player {current_player}: {e}")
+            # Fallback to just draw action
+            mask[UNOVocabulary.DRAW_ACTION] = True
+            token_to_hand_index[UNOVocabulary.DRAW_ACTION] = -1
+    
         return mask, token_to_hand_index
 
     def _init_pygame(self) -> None:
@@ -157,47 +171,60 @@ class UNOEnv(gym.Env):
             obs = self._get_observation()
             info = self.game.get_game_state()
             return obs, 0.0, True, False, info
-
+    
         current_player = self.game.current_player
-
-        # Store game state before action
         prev_hand_size = len(self.game.players_hands[current_player])
-
+    
         # Create action mask and token mapping
         action_mask, token_to_hand_index = self.create_action_mask(current_player)
-
+    
         try:
             if action_token == UNOVocabulary.DRAW_ACTION:
                 # Draw card action
                 result = self.game.draw_card(current_player)
-
+                self._last_draw_result = result  # Store for next action mask
+    
+            elif action_token == UNOVocabulary.PASS_ACTION:
+                # Pass action (only valid in normal rules after drawing a playable card)
+                if (self.game.game_mode == GameMode.NORMAL and
+                        hasattr(self, '_last_draw_result') and
+                        self._last_draw_result.get("must_play_or_pass", False)):
+                    self.game._next_player()
+                    result = {"valid": True, "action_type": "pass", "turn_ended": True}
+                    self._last_draw_result = None  # Clear state
+                else:
+                    result = {"valid": False, "reason": "Cannot pass at this time"}
+    
             elif action_token in token_to_hand_index:
                 # Play card action - convert token to hand index
                 hand_index = token_to_hand_index[action_token]
                 card = self.game.players_hands[current_player][hand_index]
-
+    
                 if card.type in [CardType.WILD, CardType.WILD_DRAW_FOUR]:
                     chosen_color = self._choose_wild_color(current_player)
                     result = self.game.play_card(current_player, hand_index, chosen_color)
                 else:
                     result = self.game.play_card(current_player, hand_index)
-
+    
+                result["action_type"] = "play_card"
+                self._last_draw_result = None  # Clear state after playing
+    
             else:
                 # Invalid action token
                 result = {"valid": False, "reason": f"Invalid action token: {action_token}"}
-
+    
         except Exception as e:
             print(f"Error in step: {e}")
             result = {"valid": False, "reason": f"Exception: {str(e)}"}
-
+    
         terminated = self.game.game_over
         truncated = False
-
+    
         obs = self._get_observation()
         info = self.game.get_game_state()
         if result:
             info.update(result)
-
+    
         # Add additional info for reward calculation in trainer
         info.update({
             'prev_hand_size': prev_hand_size,
@@ -205,10 +232,10 @@ class UNOEnv(gym.Env):
             'action_taken': action_token,
             'current_player': current_player
         })
-
+    
         # Only return 1 if this player wins, 0 otherwise
         reward = 1.0 if (result.get("winner") == current_player) else 0.0
-
+    
         return obs, reward, terminated, truncated, info
 
     def _choose_wild_color(self, player: int) -> CardColor:

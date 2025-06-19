@@ -205,72 +205,61 @@ class UNOGame:
     
         return {"valid": True, **result}
 
+
     def draw_card(self, player: int) -> Dict[str, Any]:
         """Player draws a card from deck"""
         if self.game_over:
             return {"valid": False, "reason": "Game is over"}
-
+    
         if player != self.current_player:
             return {"valid": False, "reason": "Not player's turn"}
-
+    
         # Street rules: if there's a pending draw stack, must draw all stacked cards
         if self.game_mode == GameMode.STREET and self.pending_draw_stack > 0:
             self._force_draw(player, self.pending_draw_stack)
             self.pending_draw_stack = 0
             self._next_player()
             return {"valid": True, "drew_cards": self.pending_draw_stack, "turn_ended": True}
-
-        # Street rules: keep drawing until a playable card is found
-        if self.game_mode == GameMode.STREET:
-            return self._street_draw_until_playable(player)
-
-        # Normal rules: draw one card
-        return self._normal_draw_card(player)
-
-    def _street_draw_until_playable(self, player: int) -> Dict[str, Any]:
-        """Street rules: draw cards until finding a playable one"""
-        cards_drawn = 0
-        top_card = self.discard_pile[-1] if self.discard_pile else None
-
-        while True:
-            if len(self.deck) == 0:
-                self._reshuffle_deck()
-
-            if len(self.deck) == 0:
-                self._next_player()
-                return {"valid": True, "cards_drawn": cards_drawn, "turn_ended": True, "reason": "No cards available"}
-
-            card = self.deck.pop()
-            self.players_hands[player].append(card)
-            cards_drawn += 1
-
-            if top_card and card.can_play_on(top_card):
-                return {"valid": True, "cards_drawn": cards_drawn, "must_play": True, "drawn_card_index": len(self.players_hands[player]) - 1}
-
-    def _normal_draw_card(self, player: int) -> Dict[str, Any]:
-        """Normal rules: draw one card"""
+    
+        # Both normal and street rules: draw one card
         if len(self.deck) == 0:
             self._reshuffle_deck()
-
+    
         if len(self.deck) == 0:
             self._next_player()
             return {"valid": True, "can_play_drawn": False, "turn_ended": True, "reason": "No cards available"}
-
+    
         card = self.deck.pop()
         self.players_hands[player].append(card)
         drawn_card_index = len(self.players_hands[player]) - 1
-
+    
         top_card = self.discard_pile[-1] if self.discard_pile else None
-        if top_card and card.can_play_on(top_card):
+        can_play_drawn = top_card and card.can_play_on(top_card)
+    
+        # The key difference: turn behavior based on game mode
+        if self.game_mode == GameMode.STREET:
+            # Street rules: turn continues after drawing
             return {
                 "valid": True,
-                "can_play_drawn": True,
+                "cards_drawn": 1,
+                "turn_ended": False,
                 "drawn_card_index": drawn_card_index,
-                "must_play_or_pass": True
+                "can_play_drawn": can_play_drawn
             }
         else:
-            self._next_player()
-            return {"valid": True, "can_play_drawn": False, "turn_ended": True}
+            # Normal rules: turn behavior depends on whether drawn card is playable
+            if can_play_drawn:
+                return {
+                    "valid": True,
+                    "can_play_drawn": True,
+                    "drawn_card_index": drawn_card_index,
+                    "turn_ended": False,
+                    "must_play_or_pass": True
+                }
+            else:
+                self._next_player()
+                return {"valid": True, "can_play_drawn": False, "turn_ended": True}
+
 
     def _handle_card_effects(self, card: Card) -> Dict[str, Any]:
         """Handle special effects of played cards"""
@@ -335,6 +324,6 @@ class UNOGame:
             "deck_size": len(self.deck),
             "game_over": self.game_over,
             "winner": self.winner,
-            "game_mode": self.game_mode.value,
+            "game_mode": self.game_mode,
             "pending_draw_stack": self.pending_draw_stack
         }

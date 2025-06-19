@@ -1,10 +1,7 @@
 import argparse
-import random
-import time
 
-from uno_ai.environment.uno_vocabulary import UNOVocabulary
+from uno_ai.environment.uno_game import GameMode
 from uno_ai.evaluation.uno_evaluator import UNOEvaluator
-from uno_ai.environment.uno_env import UNOEnv
 
 
 def main():
@@ -19,6 +16,9 @@ def main():
                         help="Render the game visually")
     parser.add_argument("--delay", type=float, default=1,
                         help="Delay in seconds between moves (default: 1)")
+    parser.add_argument("--game-mode", type=str, default="normal",
+                        choices=["normal", "street"],
+                        help="Game mode to use (default: normal)")
 
     args = parser.parse_args()
 
@@ -36,7 +36,7 @@ def main():
     model_paths = model_paths[:args.num_players]
 
     # Use evaluator with configured players
-    evaluator = UNOEvaluator(num_players=args.num_players, model_paths=model_paths)
+    evaluator = UNOEvaluator(num_players=args.num_players, game_mode=args.game_mode, model_paths=model_paths)
     evaluator.evaluate(num_episodes=args.episodes, render=args.render, delay=args.delay)
 
 

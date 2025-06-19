@@ -7,6 +7,7 @@ import numpy as np
 import torch
 
 from uno_ai.environment.uno_env import UNOEnv
+from uno_ai.environment.uno_game import GameMode
 from uno_ai.environment.uno_vocabulary import UNOVocabulary
 
 
@@ -17,8 +18,8 @@ class  OpponentConfig:
     env_players: List[int]    # Which players use environment logic
 
 class MultiAgentUNOEnv(UNOEnv):
-    def __init__(self, num_players: int = 4, render_mode: Optional[str] = None):
-        super().__init__(num_players, render_mode)
+    def __init__(self, num_players: int = 4, game_mode: GameMode = GameMode.NORMAL, render_mode: Optional[str] = None):
+        super().__init__(num_players, game_mode, render_mode)
         self.opponent_config: Optional[OpponentConfig] = None
         self.trained_agents: Dict[int, Any] = {}  # Store multiple agent instances
         self.vocab_size = UNOVocabulary.VOCAB_SIZE
