@@ -159,7 +159,10 @@ class MultiAgentPPOTrainer(PPOTrainer):
                 self.episode_wins.append(1.0 if is_win else 0.0)
 
                 if is_win:
+                    if scenario.name not in self.scenario_stats:
+                        self.scenario_stats[scenario.name] = {'count': 0, 'wins': 0}
                     self.scenario_stats[scenario.name]['wins'] += 1
+
 
                 self.buffer.finish_path(0)
                 self.episode_rewards.append(episode_reward)
