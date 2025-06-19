@@ -95,6 +95,12 @@ class MultiAgentPPOTrainer(PPOTrainer):
 
     def collect_rollouts(self):
         """Enhanced rollout collection with scenario sampling and random agent positions"""
+        
+        # Clear previous rollout data
+        self.episode_rewards.clear()
+        self.episode_lengths.clear()
+        self.episode_wins.clear()
+        
         try:
             # Sample training scenario
             scenario = self.training_config.sample_scenario()
