@@ -1,6 +1,6 @@
 # UNO AI - Reinforcement Learning Training Environment
 
-A comprehensive UNO card game implementation with AI agents trained using Proximal Policy Optimization (PPO). This project provides a complete training environment for developing intelligent UNO players with support for multi-agent scenarios, self-play training, and real-time visualization.
+A UNO card game implementation with AI agents trained using Proximal Policy Optimization (PPO). This project provides a complete training environment for developing intelligent UNO players with support for multi-agent scenarios, self-play training, and real-time visualization.
 
 ## 🎮 Features
 
