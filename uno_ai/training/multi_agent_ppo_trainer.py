@@ -272,6 +272,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
 
         print(f"\nStarting Multi-Agent PPO training for {total_timesteps:,} timesteps")
         print(f"Total scenarios: {len(self.training_config.scenarios)}")
+        print(f"Total trainable parameters: {sum(p.numel() for p in self.agent.parameters() if p.requires_grad):,}")
         print("-" * 80)
 
         while timesteps_collected < total_timesteps:
