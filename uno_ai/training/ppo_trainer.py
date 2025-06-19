@@ -102,7 +102,7 @@ class RewardCalculator:
             return 0.0
 
 class PPOAgent(nn.Module):
-    def __init__(self, vocab_size: int = UNOTokens.VOCAB_SIZE, dim: int = 64, n_layers: int = 4, n_heads: int = 4):
+    def __init__(self, vocab_size: int = UNOTokens.VOCAB_SIZE, dim: int = 64, n_layers: int = 4, n_heads: int = 2):
         super().__init__()
         self.dim = dim
         self.vocab_size = vocab_size
