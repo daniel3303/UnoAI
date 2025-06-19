@@ -1,0 +1,580 @@
+from collections import deque
+from dataclasses import dataclass
+from typing import Dict, Tuple, Optional
+
+import numpy as np
+import torch
+import torch.nn as nn
+from tqdm import tqdm
+
+from uno_ai.environment.uno_env import UNOEnv
+from uno_ai.model.uno_transformer import UNOTokens
+
+
+@dataclass
+class PPOConfig:
+    learning_rate: float = 3e-4
+    gamma: float = 0.99
+    gae_lambda: float = 0.95
+    clip_epsilon: float = 0.2
+    value_loss_coef: float = 0.5
+    entropy_coef: float = 0.01
+    max_grad_norm: float = 0.5
+    ppo_epochs: int = 4
+    batch_size: int = 32
+    buffer_size: int = 1024
+
+class RewardCalculator:
+    """Handles reward calculation for UNO training"""
+
+    def __init__(self):
+        # Reward weights - easy to tune
+        self.rewards = {
+            'win': 50.0,
+            'card_played': 1,
+            'card_drawn': -1,
+            'uno_achieved': 10.0,  # 1 card left
+            'close_to_uno': 3.0,   # 2 cards left
+            'special_card_bonus': 0,
+            'wild_card_bonus': 0,
+            'large_hand_penalty_per_card': -1,
+            'large_hand_threshold': 10,
+            'turn_penalty': -0.5,
+            'invalid_action': -1,
+        }
+
+    def calculate_reward(self, info: dict, env_reward: float) -> float:
+        """Calculate comprehensive reward based on game state"""
+        reward = 0.0
+
+        # 1. Win condition (use environment reward)
+        if env_reward > 0:
+            reward += self.rewards['win']
+
+        # 2. Hand size changes
+        prev_size = info.get('prev_hand_size', 0)
+        current_size = info.get('current_hand_size', 0)
+
+        if current_size < prev_size:
+            # Played cards - positive reward
+            cards_played = prev_size - current_size
+            reward += cards_played * self.rewards['card_played']
+
+        elif current_size > prev_size:
+            # Drew cards - small penalty
+            cards_drawn = current_size - prev_size
+            reward += cards_drawn * self.rewards['card_drawn']
+
+        # 3. UNO situation bonuses
+        if current_size == 1:
+            reward += self.rewards['uno_achieved']
+        elif current_size == 2:
+            reward += self.rewards['close_to_uno']
+
+        # 4. Large hand penalty
+        if current_size > self.rewards['large_hand_threshold']:
+            excess_cards = current_size - self.rewards['large_hand_threshold']
+            reward += excess_cards * self.rewards['large_hand_penalty_per_card']
+
+        # 5. Turn penalty (encourage efficiency)
+        reward += self.rewards['turn_penalty']
+
+        # 6. Invalid action penalty
+        if not info.get('valid', True):
+            reward += self.rewards['invalid_action']
+
+        return reward
+
+    def calculate_card_type_bonus(self, card_info: dict) -> float:
+        """Calculate bonus based on card type played"""
+        if not card_info:
+            return 0.0
+
+        card_type = card_info.get('type', '')
+
+        if card_type in ['wild', 'wild_draw_four']:
+            return self.rewards['wild_card_bonus']
+        elif card_type in ['skip', 'reverse', 'draw_two']:
+            return self.rewards['special_card_bonus']
+        else:
+            return 0.0
+
+class PPOAgent(nn.Module):
+    def __init__(self, vocab_size: int = UNOTokens.VOCAB_SIZE, dim: int = 16, n_layers: int = 2, n_heads: int = 2):
+        super().__init__()
+        self.dim = dim
+        self.vocab_size = vocab_size
+
+        # Token embedding and positional encoding
+        self.token_embedding = nn.Embedding(vocab_size, dim)
+        self.dropout = nn.Dropout(0.1)
+
+        # Transformer layers
+        from uno_ai.model.transformer_block import TransformerBlock
+        self.layers = nn.ModuleList([
+            TransformerBlock(dim, n_heads, dropout=0.1)
+            for _ in range(n_layers)
+        ])
+
+        self.norm = nn.LayerNorm(dim)
+
+        # Policy head - outputs probability over entire vocabulary
+        self.policy_head = nn.Linear(dim, vocab_size)
+
+        # Value head (state value estimation)
+        self.value_head = nn.Linear(dim, 1)
+
+        # Initialize weights
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module: nn.Module) -> None:
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+        elif isinstance(module, nn.LayerNorm):
+            torch.nn.init.zeros_(module.bias)
+            torch.nn.init.ones_(module.weight)
+
+    def forward(self, tokens: torch.Tensor, attention_mask: Optional[torch.Tensor] = None):
+        batch_size, seq_len = tokens.shape
+
+        # Token embeddings
+        x = self.token_embedding(tokens)
+        x = self.dropout(x)
+
+        # Create causal mask for autoregressive generation
+        if attention_mask is None:
+            attention_mask = torch.tril(torch.ones(seq_len, seq_len, device=tokens.device))
+            attention_mask = attention_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
+
+        # Pass through transformer layers
+        for layer in self.layers:
+            x = layer(x, attention_mask)
+
+        # Final normalization
+        x = self.norm(x)
+
+        # Use the last token's representation for policy and value
+        last_hidden = x[:, -1, :]  # [batch_size, dim]
+
+        # Get action logits over entire vocabulary and state value
+        action_logits = self.policy_head(last_hidden)
+        state_value = self.value_head(last_hidden).squeeze(-1)
+
+        return action_logits, state_value
+
+    def get_action_and_value(self, tokens: torch.Tensor, action_mask: torch.Tensor, action: Optional[torch.Tensor] = None):
+        action_logits, value = self.forward(tokens)
+
+        # Apply action mask (set invalid actions to very negative values)
+        masked_logits = action_logits.clone()
+        masked_logits[~action_mask] = -1e8
+
+        # Create action distribution
+        action_dist = torch.distributions.Categorical(logits=masked_logits)
+
+        if action is None:
+            action = action_dist.sample()
+
+        return action, action_dist.log_prob(action), action_dist.entropy(), value
+
+class PPOBuffer:
+    def __init__(self, size: int, obs_dim: int, vocab_size: int):
+        self.size = size
+        self.obs_dim = obs_dim
+        self.vocab_size = vocab_size
+        self.reset()
+
+    def reset(self):
+        self.observations = np.zeros((self.size, self.obs_dim), dtype=np.int32)
+        self.action_masks = np.zeros((self.size, self.vocab_size), dtype=np.bool_)
+        self.actions = np.zeros(self.size, dtype=np.int32)
+        self.rewards = np.zeros(self.size, dtype=np.float32)
+        self.values = np.zeros(self.size, dtype=np.float32)
+        self.log_probs = np.zeros(self.size, dtype=np.float32)
+        self.dones = np.zeros(self.size, dtype=np.bool_)
+        self.ptr = 0
+        self.path_start_idx = 0
+
+    def store(self, obs, action_mask, action, reward, value, log_prob, done):
+        # FIX: Check if buffer is full before storing
+        if self.ptr >= self.size:
+            return False  # Buffer is full, can't store more
+
+        self.observations[self.ptr] = obs
+        self.action_masks[self.ptr] = action_mask
+        self.actions[self.ptr] = action
+        self.rewards[self.ptr] = reward
+        self.values[self.ptr] = value
+        self.log_probs[self.ptr] = log_prob
+        self.dones[self.ptr] = done
+        self.ptr += 1
+        return True  # Successfully stored
+
+    def is_full(self):
+        """Check if buffer is full"""
+        return self.ptr >= self.size
+
+    def remaining_capacity(self):
+        """Get remaining buffer capacity"""
+        return max(0, self.size - self.ptr)
+
+    def finish_path(self, last_value=0):
+        """Calculate advantages and returns for the current trajectory"""
+        path_slice = slice(self.path_start_idx, self.ptr)
+        rewards = np.append(self.rewards[path_slice], last_value)
+        values = np.append(self.values[path_slice], last_value)
+
+        # Calculate GAE advantages
+        deltas = rewards[:-1] + 0.99 * values[1:] - values[:-1]
+        advantages = self._discount_cumsum(deltas, 0.99 * 0.95)
+
+        # Calculate returns
+        returns = advantages + self.values[path_slice]
+
+        # Store advantages and returns
+        if not hasattr(self, 'advantages'):
+            self.advantages = np.zeros(self.size, dtype=np.float32)
+            self.returns = np.zeros(self.size, dtype=np.float32)
+
+        self.advantages[path_slice] = advantages
+        self.returns[path_slice] = returns
+
+        self.path_start_idx = self.ptr
+
+    def get(self):
+        """Get all data and normalize advantages - handle partial fills"""
+        # Use actual collected experiences, not the full buffer size
+        actual_size = self.ptr
+
+        if actual_size == 0:
+            raise ValueError("Buffer is empty, cannot get data")
+
+        # Only process the experiences we actually collected
+        observations = self.observations[:actual_size]
+        action_masks = self.action_masks[:actual_size]
+        actions = self.actions[:actual_size]
+        rewards = self.rewards[:actual_size]
+        values = self.values[:actual_size]
+        log_probs = self.log_probs[:actual_size]
+        dones = self.dones[:actual_size]
+
+        # Check if we have advantages computed
+        if not hasattr(self, 'advantages') or self.advantages is None:
+            print(f"Warning: No advantages computed, creating dummy advantages for {actual_size} experiences")
+            self.advantages = np.zeros(self.size, dtype=np.float32)
+            self.returns = self.values.copy()  # Simple fallback
+
+        advantages = self.advantages[:actual_size]
+        returns = self.returns[:actual_size] if hasattr(self, 'returns') and self.returns is not None else values
+
+        # Normalize advantages
+        if len(advantages) > 1:
+            adv_mean = np.mean(advantages)
+            adv_std = np.std(advantages)
+            advantages = (advantages - adv_mean) / (adv_std + 1e-8)
+        else:
+            advantages = np.zeros_like(advantages)
+
+        data = dict(
+            observations=torch.tensor(observations, dtype=torch.long),
+            action_masks=torch.tensor(action_masks, dtype=torch.bool),
+            actions=torch.tensor(actions, dtype=torch.long),
+            returns=torch.tensor(returns, dtype=torch.float32),
+            advantages=torch.tensor(advantages, dtype=torch.float32),
+            log_probs=torch.tensor(log_probs, dtype=torch.float32),
+            values=torch.tensor(values, dtype=torch.float32)
+        )
+
+        # Reset buffer
+        self.reset()
+        return data
+
+    def _discount_cumsum(self, x, discount):
+        """Compute discounted cumulative sum"""
+        return np.array([np.sum(discount**np.arange(len(x)-i) * x[i:]) for i in range(len(x))])
+
+class PPOTrainer:
+    def __init__(self, config: PPOConfig = PPOConfig()):
+        self.config = config
+        self.device = self._get_best_device()
+        self.vocab_size = UNOTokens.VOCAB_SIZE
+
+        # Initialize environment
+        self.env = UNOEnv(num_players=4, render_mode=None)
+
+        # Initialize agent
+        self.agent = PPOAgent(vocab_size=self.vocab_size).to(self.device)
+        self.optimizer = torch.optim.Adam(self.agent.parameters(), lr=config.learning_rate)
+
+        # Initialize buffer
+        obs_dim = self.env.observation_space.shape[0]
+        self.buffer = PPOBuffer(config.buffer_size, obs_dim, self.vocab_size)
+
+        # Initialize reward calculator
+        self.reward_calculator = RewardCalculator()
+
+        # Training metrics
+        self.episode_rewards = deque(maxlen=1)
+        self.episode_lengths = deque(maxlen=1)
+        self.episode_wins = deque(maxlen=1)
+
+    def _get_best_device(self):
+        """Select the best available device with MPS support"""
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+            print(f"Using CUDA: {torch.cuda.get_device_name()}")
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            device = torch.device("mps")
+            print("Using MPS (Apple Silicon GPU)")
+        else:
+            device = torch.device("cpu")
+            print("Using CPU")
+
+        return device
+
+    def count_parameters(self):
+        """Count total trainable parameters"""
+        total_params = sum(p.numel() for p in self.agent.parameters() if p.requires_grad)
+        return total_params
+
+    def create_action_mask(self, current_player: int) -> Tuple[np.ndarray, Dict[int, int]]:
+        """Create action mask and token-to-hand-index mapping for current game state"""
+        mask = np.zeros(self.vocab_size, dtype=bool)
+        token_to_hand_index = {}
+
+        # Get current player's hand
+        hand = self.env.game.players_hands[current_player]
+        valid_card_indices = self.env.game.get_valid_actions(current_player)
+
+        # Enable tokens for valid cards in hand
+        for hand_index in valid_card_indices:
+            if hand_index < len(hand):
+                card = hand[hand_index]
+                card_token = UNOTokens.card_to_token(card)
+                mask[card_token] = True
+                token_to_hand_index[card_token] = hand_index
+
+        # Always enable draw action
+        mask[UNOTokens.DRAW_ACTION] = True
+        token_to_hand_index[UNOTokens.DRAW_ACTION] = -1  # Special indicator for draw
+
+        return mask, token_to_hand_index
+
+    def collect_rollouts(self):
+        """Collect rollouts for training with custom reward calculation"""
+        obs, _ = self.env.reset()
+        episode_reward = 0
+        episode_length = 0
+
+        for _ in range(self.config.buffer_size):
+            obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
+
+            current_player = self.env.game.current_player
+            action_mask, token_to_hand_index = self.create_action_mask(current_player)
+            action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
+
+            with torch.no_grad():
+                action_token, log_prob, _, value = self.agent.get_action_and_value(obs_tensor, action_mask_tensor)
+
+            action_token_item = action_token.item()
+
+            # Convert token to environment action and get card info
+            card_info = None
+            if action_token_item == UNOTokens.DRAW_ACTION:
+                env_action = 7
+            elif action_token_item in token_to_hand_index:
+                env_action = token_to_hand_index[action_token_item]
+                # Get card information for bonus calculation
+                if env_action < len(self.env.game.players_hands[current_player]):
+                    card = self.env.game.players_hands[current_player][env_action]
+                    card_info = {
+                        'type': card.type.value,
+                        'color': card.color.value,
+                        'number': card.number
+                    }
+            else:
+                print(f"Warning: Invalid action token {action_token_item}, falling back to draw")
+                env_action = 7
+                action_token_item = UNOTokens.DRAW_ACTION
+
+            # Take step in environment
+            next_obs, env_reward, terminated, truncated, info = self.env.step(env_action)
+            if info['valid'] is False:
+                env_reward += self.reward_calculator.rewards['invalid_action']
+            
+            done = terminated or truncated
+
+            # Calculate custom reward based on game state
+            reward = self.reward_calculator.calculate_reward(info, env_reward)
+
+            # Add card type bonus if applicable
+            if card_info:
+                reward += self.reward_calculator.calculate_card_type_bonus(card_info)
+
+            # Store experience with our custom reward
+            self.buffer.store(
+                obs, action_mask, action_token_item, reward,
+                value.item(), log_prob.item(), done
+            )
+
+            episode_reward += reward
+            episode_length += 1
+            obs = next_obs
+
+            if done:
+                # Track wins
+                winner = info.get('winner')
+                is_win = winner == 0 if winner is not None else False  # Assuming agent is player 0
+                self.episode_wins.append(1.0 if is_win else 0.0)
+
+                self.buffer.finish_path(0)
+                self.episode_rewards.append(episode_reward)
+                self.episode_lengths.append(episode_length)
+
+                obs, _ = self.env.reset()
+                episode_reward = 0
+                episode_length = 0
+
+            if self.buffer.ptr >= self.config.buffer_size:
+                if not done:
+                    obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
+                    current_player = self.env.game.current_player
+                    action_mask, _ = self.create_action_mask(current_player)
+                    action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
+
+                    with torch.no_grad():
+                        _, _, _, last_value = self.agent.get_action_and_value(obs_tensor, action_mask_tensor)
+                    self.buffer.finish_path(last_value.item())
+                break
+
+    def update_policy(self, data: Dict[str, torch.Tensor]):
+        """Update policy using PPO"""
+        observations = data['observations'].to(self.device)
+        action_masks = data['action_masks'].to(self.device)
+        actions = data['actions'].to(self.device)
+        old_log_probs = data['log_probs'].to(self.device)
+        returns = data['returns'].to(self.device)
+        advantages = data['advantages'].to(self.device)
+        old_values = data['values'].to(self.device)
+
+        # Convert to batches
+        batch_size = self.config.batch_size
+        indices = torch.randperm(len(observations))
+
+        total_policy_loss = 0
+        total_value_loss = 0
+        total_entropy_loss = 0
+
+        for epoch in range(self.config.ppo_epochs):
+            for start in range(0, len(observations), batch_size):
+                end = start + batch_size
+                batch_indices = indices[start:end]
+
+                batch_obs = observations[batch_indices]
+                batch_action_masks = action_masks[batch_indices]
+                batch_actions = actions[batch_indices]
+                batch_old_log_probs = old_log_probs[batch_indices]
+                batch_returns = returns[batch_indices]
+                batch_advantages = advantages[batch_indices]
+                batch_old_values = old_values[batch_indices]
+
+                # Get new policy values
+                _, new_log_probs, entropy, new_values = self.agent.get_action_and_value(
+                    batch_obs, batch_action_masks, batch_actions
+                )
+
+                # Calculate ratio
+                ratio = torch.exp(new_log_probs - batch_old_log_probs)
+
+                # Calculate policy loss
+                policy_loss_1 = batch_advantages * ratio
+                policy_loss_2 = batch_advantages * torch.clamp(
+                    ratio, 1 - self.config.clip_epsilon, 1 + self.config.clip_epsilon
+                )
+                policy_loss = -torch.min(policy_loss_1, policy_loss_2).mean()
+
+                # Calculate value loss
+                value_loss = nn.MSELoss()(new_values, batch_returns)
+
+                # Calculate entropy loss
+                entropy_loss = entropy.mean()
+
+                # Total loss
+                total_loss = (
+                        policy_loss +
+                        self.config.value_loss_coef * value_loss -
+                        self.config.entropy_coef * entropy_loss
+                )
+
+                # Update
+                self.optimizer.zero_grad()
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.agent.parameters(), self.config.max_grad_norm)
+                self.optimizer.step()
+
+                total_policy_loss += policy_loss.item()
+                total_value_loss += value_loss.item()
+                total_entropy_loss += entropy_loss.item()
+
+        return {
+            'policy_loss': total_policy_loss,
+            'value_loss': total_value_loss,
+            'entropy_loss': total_entropy_loss
+        }
+
+    def train(self, total_timesteps: int):
+        """Main training loop with enhanced logging"""
+        timesteps_collected = 0
+        update_count = 0
+
+        # Show model info before training
+        total_params = self.count_parameters()
+        print(f"Starting PPO training for {total_timesteps:,} timesteps")
+        print(f"Total trainable parameters: {total_params:,}")
+        print(f"Buffer size: {self.config.buffer_size}")
+        print(f"Vocab size: {self.vocab_size}")
+        print(f"Device: {self.device}")
+        print("-" * 80)
+
+        while timesteps_collected < total_timesteps:
+            self.collect_rollouts()
+            timesteps_collected += self.config.buffer_size
+
+            data = self.buffer.get()
+            losses = self.update_policy(data)
+            update_count += 1
+
+            # Log training progress
+            avg_reward = np.mean(self.episode_rewards) if self.episode_rewards else 0
+            avg_length = np.mean(self.episode_lengths) if self.episode_lengths else 0
+            win_rate = np.mean(self.episode_wins) if self.episode_wins else 0
+
+            print(f"Update {update_count:4d} | Steps: {timesteps_collected:8,}/{total_timesteps:,} | "
+                  f"Reward: {avg_reward:6.2f} | Length: {avg_length:5.1f} | WinRate: {win_rate:.3f} | "
+                  f"PolicyLoss: {losses['policy_loss']:6.4f} | ValueLoss: {losses['value_loss']:6.4f} | "
+                  f"Entropy: {losses['entropy_loss']:6.4f}")
+
+            if update_count % 10 == 0:
+                self.save_model(f"uno_ppo_model_update_{update_count}.pt")
+
+    def save_model(self, filepath: str):
+        """Save model checkpoint"""
+        torch.save({
+            'model_state_dict': self.agent.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'config': self.config,
+            'vocab_size': self.vocab_size
+        }, filepath)
+        print(f"Model saved to {filepath}")
+
+    def load_model(self, filepath: str):
+        """Load model checkpoint"""
+        checkpoint = torch.load(filepath, map_location=self.device)
+        self.agent.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.vocab_size = checkpoint.get('vocab_size', UNOTokens.VOCAB_SIZE)
+        print(f"Model loaded from {filepath}")
