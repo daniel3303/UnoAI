@@ -201,7 +201,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                 if done:
                     # Track wins for primary agent
                     winner = info.get('winner')
-                    logger.debug(f"Winner is: {winner}")
+                    logger.debug(f"Winner is: {winner} (Primary agent: {self.primary_agent_id})")
                     is_win = winner == self.primary_agent_id if winner is not None else False
     
                     # Record this episode for the current scenario
