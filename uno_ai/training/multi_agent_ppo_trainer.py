@@ -1,6 +1,5 @@
-# ./uno_ai/training/multi_agent_ppo_trainer.py
+import logging
 from collections import deque
-from typing import Dict
 
 import numpy as np
 import torch
@@ -8,8 +7,12 @@ import torch
 from uno_ai.environment.multi_agent_uno_env import MultiAgentUNOEnv, OpponentConfig
 from uno_ai.model.uno_transformer import UNOTokens
 from uno_ai.training.multi_agent_config import MultiAgentTrainingConfig, TrainingScenario
+from uno_ai.training.ppo_config import PPOConfig
 from uno_ai.training.ppo_trainer import PPOAgent
-from uno_ai.training.ppo_trainer import PPOTrainer, PPOConfig, PPOBuffer, RewardCalculator
+from uno_ai.training.ppo_trainer import PPOTrainer, PPOBuffer, RewardCalculator
+
+logger = logging.getLogger(__name__)
+
 
 
 class MultiAgentPPOTrainer(PPOTrainer):
@@ -107,7 +110,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
 
             for step in range(self.config.buffer_size):
                 if not self.env.game or self.env.game.game_over:
-                    print("Game over or no game, resetting...")
+                    logger.debug("Game over or no game, resetting...")
                     obs, _ = self.env.reset()
                     continue
     
@@ -117,7 +120,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                 if current_player == last_current_player:
                     consecutive_same_player += 1
                     if consecutive_same_player > 20:
-                        print(f"ERROR: Stuck on player {current_player} for {consecutive_same_player} steps! Resetting game.")
+                        logger.debug(f"Stuck on player {current_player} for {consecutive_same_player} steps! Resetting game.")
                         obs, _ = self.env.reset()
                         episode_reward = 0
                         episode_length = 0
@@ -153,7 +156,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                     try:
                         env_action = self.env.get_action_for_player(current_player, obs)
                     except Exception as e:
-                        print(f"Error getting opponent action for player {current_player}: {e}")
+                        logger.debug(f"Error getting opponent action: {e}")
                         env_action = UNOTokens.DRAW_ACTION
     
                     # Initialize variables to avoid reference errors
@@ -167,7 +170,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                     next_obs, env_reward, terminated, truncated, info = self.env.step(env_action)
                     done = terminated or truncated
                 except Exception as e:
-                    print(f"Error taking step: {e}")
+                    logger.debug(f"Error taking step: {e}")
                     # Reset and continue
                     obs, _ = self.env.reset()
                     continue
@@ -189,6 +192,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                 if done:
                     # Track wins for primary agent
                     winner = info.get('winner')
+                    logger.debug(f"Winner is: {winner}")
                     is_win = winner == self.primary_agent_id if winner is not None else False
                 
                     # Record this episode for the current scenario

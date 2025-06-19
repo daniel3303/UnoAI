@@ -1,30 +1,14 @@
-# ./uno_ai/training/ppo_trainer.py
 import os
 from collections import deque
-from dataclasses import dataclass
-from typing import Dict, Tuple, Optional
+from typing import Dict, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
-from tqdm import tqdm
 
 from uno_ai.environment.uno_env import UNOEnv
 from uno_ai.model.uno_transformer import UNOTokens
 
-
-@dataclass
-class PPOConfig:
-    learning_rate: float = 3e-4
-    gamma: float = 0.99
-    gae_lambda: float = 0.95
-    clip_epsilon: float = 0.2
-    value_loss_coef: float = 0.5
-    entropy_coef: float = 0.01
-    max_grad_norm: float = 0.5
-    ppo_epochs: int = 4
-    batch_size: int = 32
-    buffer_size: int = 1024
 
 class RewardCalculator:
     """Handles reward calculation for UNO training"""
@@ -524,13 +508,14 @@ class PPOTrainer:
                   f"Entropy: {losses['entropy_loss']:6.4f}")
 
             if update_count % 10 == 0:
-                self.save_model(f"uno_ppo_model_update_{update_count}.pt")
+                self.save_model(f"checkpoints/uno_ppo_model_update_{update_count}.pt")
 
     def save_model(self, filepath: str):
         """Save model checkpoint"""
 
         # Create the parent directory if it doesn't exist
-        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        if os.path.dirname(filepath) and not os.path.exists(os.path.dirname(filepath)):
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
 
         torch.save({
             'model_state_dict': self.agent.state_dict(),

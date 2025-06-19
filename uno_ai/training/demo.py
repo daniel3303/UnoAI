@@ -1,5 +1,8 @@
 # ./uno_ai/training/demo.py
 import argparse
+import random
+
+from uno_ai.model.uno_transformer import UNOTokens
 from uno_ai.training.evaluate import UNOEvaluator
 from uno_ai.environment.uno_env import UNOEnv
 
@@ -30,10 +33,8 @@ def main():
                 # Random valid action using token system
                 valid_action_tokens = env.get_valid_actions()
                 if valid_action_tokens:
-                    import random
                     action_token = random.choice(valid_action_tokens)
                 else:
-                    from uno_ai.model.uno_transformer import UNOTokens
                     action_token = UNOTokens.DRAW_ACTION  # Draw card
 
                 obs, reward, terminated, truncated, info = env.step(action_token)

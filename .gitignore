@@ -1,2 +1,4 @@
 .idea/
 uno_ai.egg-info/
+./checkpoints/
+./models/
