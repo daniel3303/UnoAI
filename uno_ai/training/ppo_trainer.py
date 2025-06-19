@@ -8,6 +8,7 @@ import torch.nn as nn
 
 from uno_ai.agents.ppo_agent import PPOAgent
 from uno_ai.environment.uno_env import UNOEnv
+from uno_ai.environment.uno_game import GameMode
 from uno_ai.environment.uno_vocabulary import UNOVocabulary
 from uno_ai.training.ppo_config import PPOConfig
 from uno_ai.training.reward_calculator import RewardCalculator
@@ -125,7 +126,6 @@ class PPOTrainer:
         self.vocab_size = UNOVocabulary.VOCAB_SIZE
 
         # Initialize environment with random game modes
-        from uno_ai.environment.uno_game import GameMode
         self.env = UNOEnv(num_players=4, game_mode=GameMode.NORMAL, render_mode=None)
 
         # Initialize agent

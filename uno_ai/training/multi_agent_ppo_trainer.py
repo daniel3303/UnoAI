@@ -1,17 +1,15 @@
 import logging
 import random
-from collections import deque
 
 import numpy as np
 import torch
 
-from uno_ai.agents.ppo_agent import PPOAgent
 from uno_ai.environment.multi_agent_uno_env import MultiAgentUNOEnv, OpponentConfig
 from uno_ai.environment.uno_game import GameMode
 from uno_ai.environment.uno_vocabulary import UNOVocabulary
 from uno_ai.training.multi_agent_config import MultiAgentTrainingConfig, TrainingScenario
 from uno_ai.training.ppo_config import PPOConfig
-from uno_ai.training.ppo_trainer import PPOTrainer, PPOBuffer, RewardCalculator
+from uno_ai.training.ppo_trainer import PPOTrainer
 
 logger = logging.getLogger(__name__)
 
@@ -29,38 +27,10 @@ class MultiAgentPPOTrainer(PPOTrainer):
 
         # Training configuration
         self.training_config = MultiAgentTrainingConfig()
-
-        # Multiple agent instances for self-play
-        self.agents = {}
-        self.optimizers = {}
-
-        # Create primary agent (the one being trained)
-        self.primary_agent_id = 0
-        self._create_agent(self.primary_agent_id, is_primary=True)
-
-        # Initialize buffer and other components
-        obs_dim = self.env.observation_space.shape[0]
-        self.buffer = PPOBuffer(config.buffer_size, obs_dim, self.vocab_size)
-        self.reward_calculator = RewardCalculator()
-
-        # Training metrics
-        self.episode_rewards = deque(maxlen=10)
-        self.episode_lengths = deque(maxlen=10)
-        self.episode_wins = deque(maxlen=10)
-        self.scenario_stats = {}  # This will track {scenario_name: {'episodes': [], 'wins': []}}
+        
+        self.scenario_stats = {}
 
 
-    def _create_agent(self, agent_id: int, is_primary: bool = False):
-        """Create an agent instance"""
-        agent = PPOAgent(vocab_size=self.vocab_size).to(self.device)
-        optimizer = torch.optim.Adam(agent.parameters(), lr=self.config.learning_rate)
-
-        self.agents[agent_id] = agent
-        self.optimizers[agent_id] = optimizer
-
-        if is_primary:
-            self.agent = agent  # Keep reference for compatibility
-            self.optimizer = optimizer
 
     def _setup_scenario(self, scenario: TrainingScenario):
         """Setup environment for a specific training scenario"""
@@ -86,12 +56,6 @@ class MultiAgentPPOTrainer(PPOTrainer):
 
         self.env.set_opponent_config(opponent_config)
 
-        # Add required agent instances
-        for player_id in scenario.agent_players:
-            if player_id not in self.agents:
-                self._create_agent(player_id)
-            self.env.add_trained_agent(player_id, self.agents[player_id])
-
 
     def collect_rollouts(self):
         """Enhanced rollout collection with scenario sampling and random agent positions"""
@@ -107,7 +71,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
             self._setup_scenario(scenario)
     
             # Randomly assign primary agent to different positions
-            self.primary_agent_id = random.choice(scenario.agent_players) if scenario.agent_players else random.randint(0, scenario.num_players - 1)
+            self.agent_player_id = random.choice(scenario.agent_players) if scenario.agent_players else random.randint(0, scenario.num_players - 1)
     
             # Randomly choose game mode
             game_mode = random.choice([GameMode.NORMAL, GameMode.STREET])
@@ -147,14 +111,14 @@ class MultiAgentPPOTrainer(PPOTrainer):
                 last_current_player = current_player
     
                 # Only collect experience for primary agent
-                if current_player == self.primary_agent_id:
+                if current_player == self.agent_player_id:
                     try:
                         obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
                         action_mask, token_to_hand_index = self.env.create_action_mask(current_player)
                         action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
     
                         with torch.no_grad():
-                            action_token, log_prob, _, value = self.agents[self.primary_agent_id].get_action_and_value(
+                            action_token, log_prob, _, value = self.agent.get_action_and_value(
                                 obs_tensor, action_mask_tensor
                             )
     
@@ -185,7 +149,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                     continue
     
                 # Only store experience for primary agent
-                if current_player == self.primary_agent_id and action_mask is not None:
+                if current_player == self.agent_player_id and action_mask is not None:
                     reward = self.reward_calculator.calculate_reward(info, env_reward)
     
                     self.buffer.store(
@@ -203,8 +167,8 @@ class MultiAgentPPOTrainer(PPOTrainer):
                 if done:
                     # Track wins for primary agent
                     winner = info.get('winner')
-                    logger.debug(f"Winner is: {winner} (Primary agent: {self.primary_agent_id})")
-                    is_win = winner == self.primary_agent_id if winner is not None else False
+                    logger.debug(f"Winner is: {winner} (Primary agent: {self.agent_player_id})")
+                    is_win = winner == self.agent_player_id if winner is not None else False
     
                     # Record this episode for the current scenario
                     self.scenario_stats[scenario.name]['episodes'].append(1)
@@ -222,7 +186,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                     self._setup_scenario(scenario)
     
                     # Randomly assign primary agent to different positions
-                    self.primary_agent_id = random.choice(scenario.agent_players) if scenario.agent_players else random.randint(0, scenario.num_players - 1)
+                    self.agent_player_id = random.choice(scenario.agent_players) if scenario.agent_players else random.randint(0, scenario.num_players - 1)
     
                     # Randomly choose game mode
                     self.env.game_mode = game_mode
@@ -247,14 +211,14 @@ class MultiAgentPPOTrainer(PPOTrainer):
                         self.episode_rewards.append(episode_reward)
                         self.episode_lengths.append(episode_length)
     
-                    if not done and current_player == self.primary_agent_id:
+                    if not done and current_player == self.agent_player_id:
                         try:
                             obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
                             action_mask, _ = self.env.create_action_mask(current_player)
                             action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
     
                             with torch.no_grad():
-                                _, _, _, last_value = self.agents[self.primary_agent_id].get_action_and_value(
+                                _, _, _, last_value = self.agent.get_action_and_value(
                                     obs_tensor, action_mask_tensor
                                 )
                             self.buffer.finish_path(last_value.item())
