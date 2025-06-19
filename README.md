@@ -2,6 +2,8 @@
 
 A UNO card game implementation with AI agents trained using Proximal Policy Optimization (PPO). This project provides a complete training environment for developing intelligent UNO players with support for multi-agent scenarios, self-play training, and real-time visualization.
 
+![Gameplay Image](images/gameplay.png)
+
 ## 🎮 Features
 
 ### Core Components
@@ -66,8 +68,6 @@ uno-demo --model-path uno_ppo_final_model.pt --episodes 5 --render
 ```python
 python test_uno_game.py
 ```
-#### Gameplay
-![Gameplay Image](images/gameplay.png)
 
 ## 🏗️ Architecture
 
