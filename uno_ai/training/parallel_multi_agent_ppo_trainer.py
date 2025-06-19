@@ -8,6 +8,8 @@ import pickle
 import time
 from queue import Empty
 
+from tqdm import tqdm
+
 from uno_ai.environment.multi_agent_uno_env import MultiAgentUNOEnv, OpponentConfig
 from uno_ai.training.multi_agent_ppo_trainer import MultiAgentPPOTrainer
 from uno_ai.training.ppo_trainer import PPOConfig, PPOBuffer, RewardCalculator, PPOAgent
@@ -365,7 +367,7 @@ class ParallelMultiAgentTrainer(MultiAgentPPOTrainer):
     
         print(f"Starting collection, target: {self.config.buffer_size} experiences")
     
-        for step in range(max_steps):
+        for step in tqdm(range(max_steps), desc="Collecting rollouts", unit="step"):
             step_count += 1
     
             if self.buffer.is_full():
@@ -443,11 +445,6 @@ class ParallelMultiAgentTrainer(MultiAgentPPOTrainer):
                 except Exception as e:
                     print(f"Error collecting from worker {worker_id}: {e}")
                     continue
-    
-            # Progress logging
-            if step % 50 == 0 or experiences_collected >= self.config.buffer_size:
-                progress = (experiences_collected / self.config.buffer_size) * 100
-                print(f"Step {step}: {experiences_collected}/{self.config.buffer_size} experiences ({progress:.1f}%)")
     
             # Check if we have enough experiences
             if experiences_collected >= self.config.buffer_size:
@@ -697,6 +694,7 @@ class ParallelMultiAgentTrainer(MultiAgentPPOTrainer):
             print(f"Buffer size: {self.config.buffer_size}")
             if self.use_multiprocessing:
                 print(f"Expected speedup: ~{self.num_parallel_envs}x")
+            print("Trainable parameters:", sum(p.numel() for p in self.agents[self.primary_agent_id].parameters() if p.requires_grad))
             print("-" * 80)
     
             consecutive_failures = 0
