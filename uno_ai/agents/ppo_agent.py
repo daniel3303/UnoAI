@@ -14,7 +14,7 @@ class PPOAgent(nn.Module):
         self.vocab_size = vocab_size
 
         # Token embedding and positional encoding
-        self.token_embedding = nn.Embedding(vocab_size, dim)
+        self.token_embedding = nn.Embedding(vocab_size, dim, padding_idx=UNOVocabulary.PAD)
         self.dropout = nn.Dropout(0.1)
 
         # Transformer layers
@@ -44,22 +44,23 @@ class PPOAgent(nn.Module):
         elif isinstance(module, nn.LayerNorm):
             torch.nn.init.zeros_(module.bias)
             torch.nn.init.ones_(module.weight)
-
+    
     def forward(self, tokens: torch.Tensor, attention_mask: Optional[torch.Tensor] = None):
         batch_size, seq_len = tokens.shape
-
-        # Token embeddings
+    
+        # Create attention mask for PAD tokens if not provided
+        if attention_mask is None:
+            # Mask out PAD tokens - 1 for valid tokens, 0 for PAD
+            pad_mask = (tokens != UNOVocabulary.PAD)
+            attention_mask = pad_mask.unsqueeze(1).unsqueeze(2)  # [batch, 1, 1, seq_len]
+    
+        # Token embeddings (PAD tokens will have zero embeddings due to padding_idx)
         x = self.token_embedding(tokens)
         x = self.dropout(x)
-
-        # Create causal mask for autoregressive generation
-        if attention_mask is None:
-            attention_mask = torch.tril(torch.ones(seq_len, seq_len, device=tokens.device))
-            attention_mask = attention_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, seq_len, seq_len]
-
-        # Pass through transformer layers
+    
+        # Pass through transformer layers with attention masking
         for layer in self.layers:
-            x = layer(x, attention_mask)
+            x = layer(x, attention_mask)  # PAD positions won't be attended to
 
         # Final normalization
         x = self.norm(x)
