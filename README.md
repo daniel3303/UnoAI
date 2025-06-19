@@ -66,6 +66,8 @@ uno-demo --model-path uno_ppo_final_model.pt --episodes 5 --render
 ```python
 python test_uno_game.py
 ```
+#### Gameplay
+![Gameplay Image](images/gameplay.png)
 
 ## 🏗️ Architecture
 
@@ -111,7 +113,7 @@ import gymnasium as gym
 from uno_ai.environment.uno_env import UNOEnv
 
 # Create environment
-env = UNOEnv(num_players=4, render_mode=\"human\")
+env = UNOEnv(num_players=4, render_mode="human")
 
 # Standard gym interface
 obs, info = env.reset()
