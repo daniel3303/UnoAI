@@ -4,14 +4,14 @@ class RewardCalculator:
     def __init__(self):
         # Reward weights - easy to tune
         self.rewards = {
-            'win': 10.0,
+            'win': 50.0,
             'card_played': 1,
-            'card_drawn': -0.5,
+            'card_drawn': -1,
             'uno_achieved': 5.0,  # 1 card left
             'close_to_uno': 1.0,   # 2 cards left
             'special_card_bonus': 0,
             'wild_card_bonus': 0,
-            'turn_penalty': -0.1,
+            'turn_penalty': -1,
             'invalid_action': -1,
         }
 
