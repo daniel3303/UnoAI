@@ -16,23 +16,27 @@ class MultiAgentTrainingConfig:
         self.scenarios = [
             # 4-player scenarios
             # Self-play scenarios
-            TrainingScenario("self_play_4", 4, [0, 1, 2, 3], [], [], 0.15),
-            TrainingScenario("self_play_2_vs_random", 4, [0, 1], [2, 3], [], 0.12),
+            TrainingScenario("self_play_4", 4, [0, 1, 2, 3], [], [], 0.10),
+            TrainingScenario("self_play_2_vs_random", 4, [0, 1], [2, 3], [], 0.10),
 
             # Mixed 4-player scenarios
-            TrainingScenario("vs_random_4", 4, [0], [1, 2, 3], [], 0.12),
-            TrainingScenario("vs_env_4", 4, [0], [], [1, 2, 3], 0.08),
-            TrainingScenario("mixed_4", 4, [0, 1], [2], [3], 0.08),
+            TrainingScenario("vs_random_4", 4, [0], [1, 2, 3], [], 0.10),
+            TrainingScenario("vs_env_4", 4, [0], [], [1, 2, 3], 0.10),
+            TrainingScenario("mixed_4", 4, [0, 1], [2], [3], 0.10),
 
             # 3-player scenarios
             # Self-play scenarios
-            TrainingScenario("self_play_3", 3, [0, 1, 2], [], [], 0.15),
-            TrainingScenario("self_play_2_vs_random_3", 3, [0, 1], [2], [], 0.12),
+            TrainingScenario("self_play_3", 3, [0, 1, 2], [], [], 0.10),
+            TrainingScenario("self_play_2_vs_random_3", 3, [0, 1], [2], [], 0.05),
 
             # Mixed 3-player scenarios  
-            TrainingScenario("vs_random_3", 3, [0], [1, 2], [], 0.12),
-            TrainingScenario("vs_env_3", 3, [0], [], [1, 2], 0.08),
-            TrainingScenario("agent_vs_random_vs_env", 3, [0], [1], [2], 0.08),
+            TrainingScenario("vs_random_3", 3, [0], [1, 2], [], 0.05),
+            TrainingScenario("vs_env_3", 3, [0], [], [1, 2], 0.05),
+            TrainingScenario("agent_vs_random_vs_env", 3, [0], [1], [2], 0.05),
+            
+            # 2-player scenarios
+            TrainingScenario("self_play_2_player", 2, [0, 1], [], [], 0.10),
+            TrainingScenario("vs_random_2_player", 2, [0], [1], [], 0.10),
         ]
 
     def sample_scenario(self) -> TrainingScenario:
@@ -58,8 +62,10 @@ class MultiAgentTrainingConfig:
         print("Training Scenario Distribution:")
         print("-" * 50)
 
+        scenarios_player_counts = {s.num_players for s in self.scenarios}
+
         # Group by player count
-        for player_count in [3, 4]:
+        for player_count in scenarios_player_counts:
             scenarios = self.get_scenarios_by_player_count(player_count)
             if scenarios:
                 print(f"\n{player_count}-Player Scenarios:")

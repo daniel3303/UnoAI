@@ -1,4 +1,4 @@
-# uno_ai/training/demo.py
+# ./uno_ai/training/demo.py
 import argparse
 from uno_ai.training.evaluate import UNOEvaluator
 from uno_ai.environment.uno_env import UNOEnv
@@ -27,15 +27,16 @@ def main():
             episode_reward = 0
 
             while True:
-                # Random valid action
-                valid_actions = env.get_valid_actions()
-                if valid_actions:
+                # Random valid action using token system
+                valid_action_tokens = env.get_valid_actions()
+                if valid_action_tokens:
                     import random
-                    action = random.choice(valid_actions)
+                    action_token = random.choice(valid_action_tokens)
                 else:
-                    action = 7  # Draw card
+                    from uno_ai.model.uno_transformer import UNOTokens
+                    action_token = UNOTokens.DRAW_ACTION  # Draw card
 
-                obs, reward, terminated, truncated, info = env.step(action)
+                obs, reward, terminated, truncated, info = env.step(action_token)
                 episode_reward += reward
 
                 if args.render:

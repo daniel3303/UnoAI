@@ -1,4 +1,4 @@
-# ./uno_ai/environment/multi_agent_env.py
+# ./uno_ai/environment/multi_agent_uno_env.py
 import random
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Any
@@ -34,7 +34,7 @@ class MultiAgentUNOEnv(UNOEnv):
     def get_action_for_player(self, player_id: int, obs) -> int:
         """Get action for a specific player based on their type"""
         if not self.opponent_config:
-            return self.action_space.sample()  # Default random
+            return self._get_random_valid_action(player_id)
 
         if player_id in self.opponent_config.agent_players:
             # Use trained agent
@@ -59,49 +59,70 @@ class MultiAgentUNOEnv(UNOEnv):
             with torch.no_grad():
                 device = next(agent.parameters()).device
                 obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(device)
-                action_mask, token_to_hand_index = self._create_action_mask_for_player(player_id)
+                action_mask, token_to_hand_index = self.create_action_mask(player_id)
                 action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(device)
                 action_token, _, _, _ = agent.get_action_and_value(obs_tensor, action_mask_tensor)
 
-                # Convert to environment action
-                return self._convert_token_to_env_action(action_token.item(), token_to_hand_index)
+                # Return the token directly (environment expects tokens now)
+                return action_token.item()
+
         except Exception as e:
             print(f"Error getting agent action for player {player_id}: {e}")
             return self._get_random_valid_action(player_id)
 
     def _get_random_valid_action(self, player_id: int) -> int:
-        """Get random valid action"""
+        """Get random valid action token"""
         if not self.game:
-            return 7
+            return UNOTokens.DRAW_ACTION
 
-        valid_actions = self.game.get_valid_actions(player_id)
-        if valid_actions:
-            return random.choice(valid_actions)
-        return 7  # Draw card
+        try:
+            action_mask, _ = self.create_action_mask(player_id)
+            valid_tokens = [i for i in range(len(action_mask)) if action_mask[i]]
+
+            if valid_tokens:
+                return random.choice(valid_tokens)
+            else:
+                return UNOTokens.DRAW_ACTION
+
+        except Exception as e:
+            print(f"Error getting random action for player {player_id}: {e}")
+            return UNOTokens.DRAW_ACTION
 
     def _get_env_action(self, player_id: int) -> int:
         """Get action using simple heuristics"""
         if not self.game:
-            return 7
+            return UNOTokens.DRAW_ACTION
 
-        valid_actions = self.game.get_valid_actions(player_id)
-        if not valid_actions:
-            return 7  # Draw card
+        try:
+            action_mask, token_to_hand_index = self.create_action_mask(player_id)
+            valid_tokens = [i for i in range(len(action_mask)) if action_mask[i]]
 
-        # Simple heuristic: prefer special cards, then high numbers
-        hand = self.game.players_hands[player_id]
-        best_action = valid_actions[0]
-        best_score = -1
+            if not valid_tokens:
+                return UNOTokens.DRAW_ACTION
 
-        for action in valid_actions:
-            if action < len(hand):
-                card = hand[action]
-                score = self._calculate_card_score(card)
-                if score > best_score:
-                    best_score = score
-                    best_action = action
+            # Simple heuristic: prefer special cards, then high numbers
+            hand = self.game.players_hands[player_id]
+            best_token = valid_tokens[0]
+            best_score = -1
 
-        return best_action
+            for token in valid_tokens:
+                if token == UNOTokens.DRAW_ACTION:
+                    continue  # Skip draw action unless no other choice
+
+                if token in token_to_hand_index:
+                    hand_index = token_to_hand_index[token]
+                    if hand_index < len(hand):
+                        card = hand[hand_index]
+                        score = self._calculate_card_score(card)
+                        if score > best_score:
+                            best_score = score
+                            best_token = token
+
+            return best_token
+
+        except Exception as e:
+            print(f"Error getting env action for player {player_id}: {e}")
+            return UNOTokens.DRAW_ACTION
 
     def _calculate_card_score(self, card) -> int:
         """Simple card scoring for environment players"""
@@ -114,7 +135,7 @@ class MultiAgentUNOEnv(UNOEnv):
         else:
             return card.number if card.number else 0
 
-    def _create_action_mask_for_player(self, player_id: int):
+    def create_action_mask(self, player_id: int):
         """Create action mask for specific player"""
         mask = np.zeros(self.vocab_size, dtype=bool)
         token_to_hand_index = {}
@@ -125,28 +146,27 @@ class MultiAgentUNOEnv(UNOEnv):
             token_to_hand_index[UNOTokens.DRAW_ACTION] = -1
             return mask, token_to_hand_index
 
-        hand = self.game.players_hands[player_id]
-        valid_card_indices = self.game.get_valid_actions(player_id)
+        try:
+            # Get current player's hand
+            hand = self.game.players_hands[player_id]
+            valid_card_indices = self.game.get_valid_actions(player_id)
 
-        for hand_index in valid_card_indices:
-            if hand_index < len(hand):
-                card = hand[hand_index]
-                card_token = UNOTokens.card_to_token(card)
-                mask[card_token] = True
-                token_to_hand_index[card_token] = hand_index
+            # Enable tokens for valid cards in hand
+            for hand_index in valid_card_indices:
+                if hand_index < len(hand):
+                    card = hand[hand_index]
+                    card_token = UNOTokens.card_to_token(card)
+                    mask[card_token] = True
+                    token_to_hand_index[card_token] = hand_index
 
-        # Always enable draw action
-        mask[UNOTokens.DRAW_ACTION] = True
-        token_to_hand_index[UNOTokens.DRAW_ACTION] = -1
+            # Always enable draw action
+            mask[UNOTokens.DRAW_ACTION] = True
+            token_to_hand_index[UNOTokens.DRAW_ACTION] = -1  # Special indicator for draw
+
+        except Exception as e:
+            print(f"Error creating action mask for player {player_id}: {e}")
+            # Fallback to just draw action
+            mask[UNOTokens.DRAW_ACTION] = True
+            token_to_hand_index[UNOTokens.DRAW_ACTION] = -1
 
         return mask, token_to_hand_index
-
-    def _convert_token_to_env_action(self, action_token: int, token_to_hand_index: Dict[int, int]) -> int:
-        """Convert action token to environment action"""
-        if action_token == UNOTokens.DRAW_ACTION:
-            return 7
-        elif action_token in token_to_hand_index:
-            return token_to_hand_index[action_token]
-        else:
-            print(f"Warning: Invalid action token {action_token}, falling back to draw")
-            return 7  # Fallback to draw

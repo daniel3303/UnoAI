@@ -1,4 +1,4 @@
-# uno_ai/training/evaluate.py
+# ./uno_ai/training/evaluate.py
 import torch
 import numpy as np
 from uno_ai.training.ppo_trainer import PPOAgent
@@ -31,20 +31,20 @@ class UNOEvaluator:
             episode_length = 0
 
             while True:
-                # Get action from trained agent
+                # Get action from trained agent using token-based system
                 obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
 
+                current_player = env.game.current_player
+                action_mask, _ = env.create_action_mask(current_player)
+                action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
+
                 with torch.no_grad():
-                    action, _, _, _ = self.agent.get_action_and_value(obs_tensor)
+                    action_token, _, _, _ = self.agent.get_action_and_value(obs_tensor, action_mask_tensor)
 
-                action_item = action.item()
+                action_token_item = action_token.item()
 
-                # Ensure valid action
-                valid_actions = env.get_valid_actions()
-                if action_item not in valid_actions and valid_actions:
-                    action_item = valid_actions[0]  # Default to first valid action
-
-                obs, reward, terminated, truncated, info = env.step(action_item)
+                # Environment now handles token conversion
+                obs, reward, terminated, truncated, info = env.step(action_token_item)
                 episode_reward += reward
                 episode_length += 1
 

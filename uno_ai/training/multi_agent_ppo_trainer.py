@@ -1,3 +1,4 @@
+# ./uno_ai/training/multi_agent_ppo_trainer.py
 from collections import deque
 from typing import Dict
 
@@ -20,7 +21,6 @@ class MultiAgentPPOTrainer(PPOTrainer):
         # Use multi-agent environment
         self.current_num_players = 4  # Default
         self.env = MultiAgentUNOEnv(num_players=self.current_num_players, render_mode=None)
-
 
         # Training configuration
         self.training_config = MultiAgentTrainingConfig()
@@ -86,118 +86,156 @@ class MultiAgentPPOTrainer(PPOTrainer):
                 self._create_agent(player_id)
             self.env.add_trained_agent(player_id, self.agents[player_id])
 
-    def create_action_mask(self, current_player: int):
-        """Create action mask for current player - fixed method name"""
-        return self.env._create_action_mask_for_player(current_player)
-
+    
     def collect_rollouts(self):
-        """Enhanced rollout collection with scenario sampling"""
-        # Sample training scenario
-        scenario = self.training_config.sample_scenario()
-        self._setup_scenario(scenario)
-
-        # Track scenario usage
-        if scenario.name not in self.scenario_stats:
-            self.scenario_stats[scenario.name] = {'count': 0, 'wins': 0}
-        self.scenario_stats[scenario.name]['count'] += 1
-
-        obs, _ = self.env.reset()
-        episode_reward = 0
-        episode_length = 0
-
-        for _ in range(self.config.buffer_size):
-            current_player = self.env.game.current_player
-
-            # Only collect experience for primary agent
-            if current_player == self.primary_agent_id:
-                obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
-                action_mask, token_to_hand_index = self.create_action_mask(current_player)
-                action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
-
-                with torch.no_grad():
-                    action_token, log_prob, _, value = self.agents[self.primary_agent_id].get_action_and_value(
-                        obs_tensor, action_mask_tensor
+        """Enhanced rollout collection with scenario sampling and better error handling"""
+        try:
+            # Sample training scenario
+            scenario = self.training_config.sample_scenario()
+            self._setup_scenario(scenario)
+    
+            # Track scenario usage
+            if scenario.name not in self.scenario_stats:
+                self.scenario_stats[scenario.name] = {'count': 0, 'wins': 0}
+            self.scenario_stats[scenario.name]['count'] += 1
+    
+            obs, _ = self.env.reset()
+            episode_reward = 0
+            episode_length = 0
+            consecutive_same_player = 0
+            last_current_player = -1
+    
+            for step in range(self.config.buffer_size):
+                if not self.env.game or self.env.game.game_over:
+                    print("Game over or no game, resetting...")
+                    obs, _ = self.env.reset()
+                    continue
+    
+                current_player = self.env.game.current_player
+    
+                # Safety check for infinite loops
+                if current_player == last_current_player:
+                    consecutive_same_player += 1
+                    if consecutive_same_player > 20:
+                        print(f"ERROR: Stuck on player {current_player} for {consecutive_same_player} steps! Resetting game.")
+                        obs, _ = self.env.reset()
+                        episode_reward = 0
+                        episode_length = 0
+                        consecutive_same_player = 0
+                        continue
+                else:
+                    consecutive_same_player = 0
+    
+                last_current_player = current_player
+    
+                # Only collect experience for primary agent
+                if current_player == self.primary_agent_id:
+                    try:
+                        obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
+                        action_mask, token_to_hand_index = self.env.create_action_mask(current_player)
+                        action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
+    
+                        with torch.no_grad():
+                            action_token, log_prob, _, value = self.agents[self.primary_agent_id].get_action_and_value(
+                                obs_tensor, action_mask_tensor
+                            )
+    
+                        # Use the token directly as environment action
+                        env_action = action_token.item()
+                        buffer_action = action_token.item()
+                    except Exception as e:
+                        print(f"Error getting primary agent action: {e}")
+                        env_action = UNOTokens.DRAW_ACTION
+                        buffer_action = UNOTokens.DRAW_ACTION
+    
+                else:
+                    # Get action from appropriate opponent
+                    try:
+                        env_action = self.env.get_action_for_player(current_player, obs)
+                    except Exception as e:
+                        print(f"Error getting opponent action for player {current_player}: {e}")
+                        env_action = UNOTokens.DRAW_ACTION
+    
+                    # Initialize variables to avoid reference errors
+                    action_mask = None
+                    buffer_action = None
+                    value = None
+                    log_prob = None
+    
+                # Take step
+                try:
+                    next_obs, env_reward, terminated, truncated, info = self.env.step(env_action)
+                    done = terminated or truncated
+                except Exception as e:
+                    print(f"Error taking step: {e}")
+                    # Reset and continue
+                    obs, _ = self.env.reset()
+                    continue
+    
+                # Only store experience for primary agent
+                if current_player == self.primary_agent_id and action_mask is not None:
+                    reward = self.reward_calculator.calculate_reward(info, env_reward)
+    
+                    self.buffer.store(
+                        obs, action_mask, buffer_action, reward,
+                        value.item(), log_prob.item(), done
                     )
-
-                # Convert to environment action
-                env_action = self._convert_token_to_env_action(action_token.item(), token_to_hand_index)
-
-                # Store action for buffer
-                buffer_action = action_token.item()
-
-            else:
-                # Get action from appropriate opponent
-                env_action = self.env.get_action_for_player(current_player, obs)
-                # Initialize variables to avoid reference errors
-                action_mask = None
-                buffer_action = None
-                value = None
-                log_prob = None
-
-            # Take step
-            next_obs, env_reward, terminated, truncated, info = self.env.step(env_action)
-            done = terminated or truncated
-
-            # Only store experience for primary agent
-            if current_player == self.primary_agent_id and action_mask is not None:
-                reward = self.reward_calculator.calculate_reward(info, env_reward)
-
-                self.buffer.store(
-                    obs, action_mask, buffer_action, reward,
-                    value.item(), log_prob.item(), done
-                )
-
-                episode_reward += reward
-
-            episode_length += 1
-            obs = next_obs
-
-            if done:
-                # Track wins for primary agent
-                winner = info.get('winner')
-                is_win = winner == self.primary_agent_id if winner is not None else False
-                self.episode_wins.append(1.0 if is_win else 0.0)
-
-                if is_win:
-                    if scenario.name not in self.scenario_stats:
-                        self.scenario_stats[scenario.name] = {'count': 0, 'wins': 0}
-                    self.scenario_stats[scenario.name]['wins'] += 1
-
-
-                self.buffer.finish_path(0)
-                self.episode_rewards.append(episode_reward)
-                self.episode_lengths.append(episode_length)
-
-                # Start new episode with potentially different scenario
-                scenario = self.training_config.sample_scenario()
-                self._setup_scenario(scenario)
-
-                obs, _ = self.env.reset()
-                episode_reward = 0
-                episode_length = 0
-
-            if self.buffer.ptr >= self.config.buffer_size:
-                if not done and current_player == self.primary_agent_id:
-                    obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
-                    action_mask, _ = self.create_action_mask(current_player)
-                    action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
-
-                    with torch.no_grad():
-                        _, _, _, last_value = self.agents[self.primary_agent_id].get_action_and_value(
-                            obs_tensor, action_mask_tensor
-                        )
-                    self.buffer.finish_path(last_value.item())
-                break
-
-    def _convert_token_to_env_action(self, action_token: int, token_to_hand_index: Dict[int, int]) -> int:
-        """Convert action token to environment action"""
-        if action_token == UNOTokens.DRAW_ACTION:
-            return 7
-        elif action_token in token_to_hand_index:
-            return token_to_hand_index[action_token]
-        else:
-            print(f"Warning: Invalid action token {action_token}, falling back to draw")
-            return 7  # Fallback to draw
+    
+                    episode_reward += reward
+    
+                episode_length += 1
+                obs = next_obs
+    
+                if done:
+                    # Track wins for primary agent
+                    winner = info.get('winner')
+                    is_win = winner == self.primary_agent_id if winner is not None else False
+                    self.episode_wins.append(1.0 if is_win else 0.0)
+    
+                    if is_win:
+                        if scenario.name not in self.scenario_stats:
+                            self.scenario_stats[scenario.name] = {'count': 0, 'wins': 0}
+                        self.scenario_stats[scenario.name]['wins'] += 1
+    
+                    self.buffer.finish_path(0)
+                    self.episode_rewards.append(episode_reward)
+                    self.episode_lengths.append(episode_length)
+    
+                    # Start new episode with potentially different scenario
+                    scenario = self.training_config.sample_scenario()
+                    self._setup_scenario(scenario)
+    
+                    obs, _ = self.env.reset()
+                    episode_reward = 0
+                    episode_length = 0
+    
+                if self.buffer.ptr >= self.config.buffer_size:
+                    # Store current episode metrics even if not done
+                    if episode_reward > 0 or episode_length > 0:
+                        self.episode_rewards.append(episode_reward)
+                        self.episode_lengths.append(episode_length)
+    
+                    if not done and current_player == self.primary_agent_id:
+                        try:
+                            obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
+                            action_mask, _ = self.env.create_action_mask(current_player)
+                            action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
+    
+                            with torch.no_grad():
+                                _, _, _, last_value = self.agents[self.primary_agent_id].get_action_and_value(
+                                    obs_tensor, action_mask_tensor
+                                )
+                            self.buffer.finish_path(last_value.item())
+                        except Exception as e:
+                            print(f"Error getting last value: {e}")
+                            self.buffer.finish_path(0)
+                    break
+    
+        except Exception as e:
+            print(f"Critical error in collect_rollouts: {e}")
+            # Emergency reset
+            self.env.reset()
+            raise
 
     def train(self, total_timesteps: int):
         """Enhanced training with scenario tracking"""
@@ -218,34 +256,33 @@ class MultiAgentPPOTrainer(PPOTrainer):
             data = self.buffer.get()
             losses = self.update_policy(data)
             update_count += 1
-
+            
             # Log training progress with scenario stats
             avg_reward = np.mean(self.episode_rewards) if self.episode_rewards else 0
             avg_length = np.mean(self.episode_lengths) if self.episode_lengths else 0
             win_rate = np.mean(self.episode_wins) if self.episode_wins else 0
-
+            
             print(f"Update {update_count:4d} | Steps: {timesteps_collected:8,}/{total_timesteps:,} | "
                   f"Players: {self.current_num_players} | "
                   f"Reward: {avg_reward:6.2f} | Game Length: {avg_length:5.1f} | Win Rate: {win_rate:.3f}")
-
+            
             # Print scenario statistics every 20 updates
             if update_count % 40 == 0:
                 self._print_scenario_stats()
-
+            
             if update_count % 40 == 0:
                 self.save_model(f"checkpoints/uno_multi_agent_model_update_{update_count}.pt")
-
-
+    
     def _print_scenario_stats(self):
         """Print statistics for each training scenario"""
         print("\nScenario Statistics:")
         print("-" * 60)
-
+    
         # Group by player count
         for player_count in [3, 4]:
             scenarios = self.training_config.get_scenarios_by_player_count(player_count)
             scenario_names = [s.name for s in scenarios]
-
+    
             if any(name in self.scenario_stats for name in scenario_names):
                 print(f"\n{player_count}-Player Games:")
                 for scenario_name in scenario_names:

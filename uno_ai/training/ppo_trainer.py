@@ -1,3 +1,4 @@
+# ./uno_ai/training/ppo_trainer.py
 import os
 from collections import deque
 from dataclasses import dataclass
@@ -188,7 +189,7 @@ class PPOBuffer:
         self.obs_dim = obs_dim
         self.vocab_size = vocab_size
         self.reset()
-
+    
     def reset(self):
         self.observations = np.zeros((self.size, self.obs_dim), dtype=np.int32)
         self.action_masks = np.zeros((self.size, self.vocab_size), dtype=np.bool_)
@@ -199,12 +200,8 @@ class PPOBuffer:
         self.dones = np.zeros(self.size, dtype=np.bool_)
         self.ptr = 0
         self.path_start_idx = 0
-
+    
     def store(self, obs, action_mask, action, reward, value, log_prob, done):
-        # FIX: Check if buffer is full before storing
-        if self.ptr >= self.size:
-            return False  # Buffer is full, can't store more
-
         self.observations[self.ptr] = obs
         self.action_masks[self.ptr] = action_mask
         self.actions[self.ptr] = action
@@ -214,46 +211,38 @@ class PPOBuffer:
         self.dones[self.ptr] = done
         self.ptr += 1
         return True  # Successfully stored
-
-    def is_full(self):
-        """Check if buffer is full"""
-        return self.ptr >= self.size
-
-    def remaining_capacity(self):
-        """Get remaining buffer capacity"""
-        return max(0, self.size - self.ptr)
-
+    
     def finish_path(self, last_value=0):
         """Calculate advantages and returns for the current trajectory"""
         path_slice = slice(self.path_start_idx, self.ptr)
         rewards = np.append(self.rewards[path_slice], last_value)
         values = np.append(self.values[path_slice], last_value)
-
+    
         # Calculate GAE advantages
         deltas = rewards[:-1] + 0.99 * values[1:] - values[:-1]
         advantages = self._discount_cumsum(deltas, 0.99 * 0.95)
-
+    
         # Calculate returns
         returns = advantages + self.values[path_slice]
-
+    
         # Store advantages and returns
         if not hasattr(self, 'advantages'):
             self.advantages = np.zeros(self.size, dtype=np.float32)
             self.returns = np.zeros(self.size, dtype=np.float32)
-
+    
         self.advantages[path_slice] = advantages
         self.returns[path_slice] = returns
-
+    
         self.path_start_idx = self.ptr
-
+    
     def get(self):
         """Get all data and normalize advantages - handle partial fills"""
         # Use actual collected experiences, not the full buffer size
         actual_size = self.ptr
-
+    
         if actual_size == 0:
             raise ValueError("Buffer is empty, cannot get data")
-
+    
         # Only process the experiences we actually collected
         observations = self.observations[:actual_size]
         action_masks = self.action_masks[:actual_size]
@@ -262,16 +251,16 @@ class PPOBuffer:
         values = self.values[:actual_size]
         log_probs = self.log_probs[:actual_size]
         dones = self.dones[:actual_size]
-
+    
         # Check if we have advantages computed
         if not hasattr(self, 'advantages') or self.advantages is None:
             print(f"Warning: No advantages computed, creating dummy advantages for {actual_size} experiences")
             self.advantages = np.zeros(self.size, dtype=np.float32)
             self.returns = self.values.copy()  # Simple fallback
-
+    
         advantages = self.advantages[:actual_size]
         returns = self.returns[:actual_size] if hasattr(self, 'returns') and self.returns is not None else values
-
+    
         # Normalize advantages
         if len(advantages) > 1:
             adv_mean = np.mean(advantages)
@@ -279,7 +268,7 @@ class PPOBuffer:
             advantages = (advantages - adv_mean) / (adv_std + 1e-8)
         else:
             advantages = np.zeros_like(advantages)
-
+    
         data = dict(
             observations=torch.tensor(observations, dtype=torch.long),
             action_masks=torch.tensor(action_masks, dtype=torch.bool),
@@ -289,14 +278,15 @@ class PPOBuffer:
             log_probs=torch.tensor(log_probs, dtype=torch.float32),
             values=torch.tensor(values, dtype=torch.float32)
         )
-
+    
         # Reset buffer
         self.reset()
         return data
-
+    
     def _discount_cumsum(self, x, discount):
         """Compute discounted cumulative sum"""
         return np.array([np.sum(discount**np.arange(len(x)-i) * x[i:]) for i in range(len(x))])
+
 
 class PPOTrainer:
     def __init__(self, config: PPOConfig = PPOConfig()):
@@ -341,112 +331,86 @@ class PPOTrainer:
         """Count total trainable parameters"""
         total_params = sum(p.numel() for p in self.agent.parameters() if p.requires_grad)
         return total_params
-
-    def create_action_mask(self, current_player: int) -> Tuple[np.ndarray, Dict[int, int]]:
-        """Create action mask and token-to-hand-index mapping for current game state"""
-        mask = np.zeros(self.vocab_size, dtype=bool)
-        token_to_hand_index = {}
-
-        # Get current player's hand
-        hand = self.env.game.players_hands[current_player]
-        valid_card_indices = self.env.game.get_valid_actions(current_player)
-
-        # Enable tokens for valid cards in hand
-        for hand_index in valid_card_indices:
-            if hand_index < len(hand):
-                card = hand[hand_index]
-                card_token = UNOTokens.card_to_token(card)
-                mask[card_token] = True
-                token_to_hand_index[card_token] = hand_index
-
-        # Always enable draw action
-        mask[UNOTokens.DRAW_ACTION] = True
-        token_to_hand_index[UNOTokens.DRAW_ACTION] = -1  # Special indicator for draw
-
-        return mask, token_to_hand_index
-
+    
     def collect_rollouts(self):
         """Collect rollouts for training with custom reward calculation"""
         obs, _ = self.env.reset()
         episode_reward = 0
         episode_length = 0
-
+        agent_episode_reward = 0  # Track agent-specific reward separately
+    
         for _ in range(self.config.buffer_size):
             obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
-
+    
             current_player = self.env.game.current_player
-            action_mask, token_to_hand_index = self.create_action_mask(current_player)
-            action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
-
-            with torch.no_grad():
-                action_token, log_prob, _, value = self.agent.get_action_and_value(obs_tensor, action_mask_tensor)
-
-            action_token_item = action_token.item()
-
-            # Convert token to environment action and get card info
-            card_info = None
-            if action_token_item == UNOTokens.DRAW_ACTION:
-                env_action = 7
-            elif action_token_item in token_to_hand_index:
-                env_action = token_to_hand_index[action_token_item]
-                # Get card information for bonus calculation
-                if env_action < len(self.env.game.players_hands[current_player]):
-                    card = self.env.game.players_hands[current_player][env_action]
-                    card_info = {
-                        'type': card.type.value,
-                        'color': card.color.value,
-                        'number': card.number
-                    }
-            else:
-                print(f"Warning: Invalid action token {action_token_item}, falling back to draw")
-                env_action = 7
-                action_token_item = UNOTokens.DRAW_ACTION
-
-            # Take step in environment
-            next_obs, env_reward, terminated, truncated, info = self.env.step(env_action)
-            if info['valid'] is False:
-                env_reward += self.reward_calculator.rewards['invalid_action']
-            
-            done = terminated or truncated
-
-            # Calculate custom reward based on game state
-            reward = self.reward_calculator.calculate_reward(info, env_reward)
-
-            # Add card type bonus if applicable
-            if card_info:
-                reward += self.reward_calculator.calculate_card_type_bonus(card_info)
-
-            # Store experience with our custom reward
-            self.buffer.store(
-                obs, action_mask, action_token_item, reward,
-                value.item(), log_prob.item(), done
-            )
-
-            episode_reward += reward
+    
+            # Always track episode length
             episode_length += 1
+    
+            if current_player == 0:  # Agent's turn
+                # Use environment's action mask method
+                action_mask, token_to_hand_index = self.env.create_action_mask(current_player)
+                action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
+    
+                with torch.no_grad():
+                    action_token, log_prob, _, value = self.agent.get_action_and_value(obs_tensor, action_mask_tensor)
+    
+                action_token_item = action_token.item()
+    
+                # Take step
+                next_obs, env_reward, terminated, truncated, info = self.env.step(action_token_item)
+    
+                if info['valid'] is False:
+                    env_reward += self.reward_calculator.rewards['invalid_action']
+    
+                # Calculate custom reward based on game state
+                reward = self.reward_calculator.calculate_reward(info, env_reward)
+    
+                # Store experience
+                self.buffer.store(
+                    obs, action_mask, action_token_item, reward,
+                    value.item(), log_prob.item(), terminated or truncated
+                )
+    
+                agent_episode_reward += reward
+    
+            else:
+                # Other players - use random/heuristic actions
+                valid_actions = self.env.get_valid_actions()
+                if valid_actions:
+                    import random
+                    action_token = random.choice(valid_actions)
+                else:
+                    action_token = UNOTokens.DRAW_ACTION
+    
+                next_obs, env_reward, terminated, truncated, info = self.env.step(action_token)
+    
+            # Always track total episode reward (for all players)
+            episode_reward += env_reward
+            done = terminated or truncated
             obs = next_obs
-
+    
             if done:
                 # Track wins
                 winner = info.get('winner')
-                is_win = winner == 0 if winner is not None else False  # Assuming agent is player 0
+                is_win = winner == 0 if winner is not None else False  # Agent is player 0
                 self.episode_wins.append(1.0 if is_win else 0.0)
-
+    
                 self.buffer.finish_path(0)
-                self.episode_rewards.append(episode_reward)
+                self.episode_rewards.append(agent_episode_reward)  # Use agent-specific reward
                 self.episode_lengths.append(episode_length)
-
+    
                 obs, _ = self.env.reset()
                 episode_reward = 0
                 episode_length = 0
-
+                agent_episode_reward = 0
+    
             if self.buffer.ptr >= self.config.buffer_size:
-                if not done:
+                if not done and current_player == 0:
                     obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
-                    current_player = self.env.game.current_player
-                    action_mask, _ = self.create_action_mask(current_player)
+                    action_mask, _ = self.env.create_action_mask(current_player)
                     action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
-
+    
                     with torch.no_grad():
                         _, _, _, last_value = self.agent.get_action_and_value(obs_tensor, action_mask_tensor)
                     self.buffer.finish_path(last_value.item())
@@ -567,7 +531,7 @@ class PPOTrainer:
 
         # Create the parent directory if it doesn't exist
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        
+
         torch.save({
             'model_state_dict': self.agent.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
