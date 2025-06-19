@@ -1,3 +1,4 @@
+import os
 from collections import deque
 from dataclasses import dataclass
 from typing import Dict, Tuple, Optional
@@ -563,6 +564,10 @@ class PPOTrainer:
 
     def save_model(self, filepath: str):
         """Save model checkpoint"""
+
+        # Create the parent directory if it doesn't exist
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
         torch.save({
             'model_state_dict': self.agent.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
