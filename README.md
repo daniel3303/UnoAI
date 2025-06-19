@@ -47,9 +47,6 @@ uno-train-ppo
 
 # Multi-agent training with self-play
 uno-train-multi-agent
-
-# Multi-agent parallel training (recommended)
-uno-train-multi-agent-parallel --num-envs 8 --timesteps 2000000
 ```
 
 #### Evaluate Trained Models
