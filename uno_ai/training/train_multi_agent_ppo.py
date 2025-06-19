@@ -8,7 +8,7 @@ def main():
     parser.add_argument("--timesteps", type=int, default=2_000_000, help="Total training timesteps")
     parser.add_argument("--learning-rate", type=float, default=5e-4, help="Learning rate")
     parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
-    parser.add_argument("--buffer-size", type=int, default=2048, help="Buffer size for rollouts")
+    parser.add_argument("--buffer-size", type=int, default=4096, help="Buffer size for rollouts")
     parser.add_argument("--batch-size", type=int, default=64, help="Batch size for training")
     parser.add_argument("--ppo-epochs", type=int, default=4, help="Number of PPO epochs per update")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
