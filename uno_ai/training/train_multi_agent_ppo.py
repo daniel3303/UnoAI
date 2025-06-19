@@ -13,6 +13,7 @@ def main():
     parser.add_argument("--ppo-epochs", type=int, default=4, help="Number of PPO epochs per update")
     parser.add_argument("--debug", action="store_true", help="Enable debug logging")
     parser.add_argument("--save-path", type=str, default="models/uno_multi_agent_final.pt", help="Path to save the final model")
+    parser.add_argument("--load-checkpoint", type=str, default=None, help="Path to checkpoint to resume training from")
 
     args = parser.parse_args()
 
@@ -29,6 +30,11 @@ def main():
     )
 
     trainer = MultiAgentPPOTrainer(config)
+
+    # Load checkpoint if specified
+    if args.load_checkpoint:
+        trainer.load_model(args.load_checkpoint)
+
     trainer.train(total_timesteps=args.timesteps)
     trainer.save_model(args.save_path)
 
