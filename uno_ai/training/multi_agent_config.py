@@ -16,7 +16,7 @@ class MultiAgentTrainingConfig:
         self.scenarios = [
             # 4-player scenarios
             # Self-play scenarios
-            TrainingScenario("self_play_4", 4, [0, 1, 2, 3], [], [], 0.05),
+            TrainingScenario("self_play_4", 4, [0, 1, 2, 3], [], [], 0.10),
             TrainingScenario("self_play_2_vs_random", 4, [0, 1], [2, 3], [], 0.05),
 
             # Mixed 4-player scenarios
@@ -26,7 +26,7 @@ class MultiAgentTrainingConfig:
 
             # 3-player scenarios
             # Self-play scenarios
-            TrainingScenario("self_play_3", 3, [0, 1, 2], [], [], 0.05),
+            TrainingScenario("self_play_3", 3, [0, 1, 2], [], [], 0.10),
             TrainingScenario("self_play_2_vs_random_3", 3, [0, 1], [2], [], 0.05),
 
             # Mixed 3-player scenarios  
@@ -37,7 +37,7 @@ class MultiAgentTrainingConfig:
             # 2-player scenarios
             TrainingScenario("self_play_2_player", 2, [0, 1], [], [], 0.20),
             TrainingScenario("vs_random_2_player", 2, [0], [1], [], 0.10),
-            TrainingScenario("vs_env_2_player", 2, [0], [], [1], 0.20),
+            TrainingScenario("vs_env_2_player", 2, [0], [], [1], 0.10),
         ]
 
     def sample_scenario(self) -> TrainingScenario:

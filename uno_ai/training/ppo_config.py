@@ -12,5 +12,5 @@ class PPOConfig:
     max_grad_norm: float = 0.5
     ppo_epochs: int = 4
     batch_size: int = 64
-    buffer_size: int = 4096
+    buffer_size: int = 1024
     

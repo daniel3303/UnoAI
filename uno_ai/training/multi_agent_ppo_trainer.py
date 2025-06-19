@@ -161,7 +161,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                         buffer_action = UNOVocabulary.DRAW_ACTION
     
                 else:
-                    # Get action from appropriate opponent
+                    # Get action from the appropriate opponent
                     try:
                         env_action = self.env.get_action_for_player(current_player, obs)
                     except Exception as e:
@@ -193,6 +193,8 @@ class MultiAgentPPOTrainer(PPOTrainer):
                         value.item(), log_prob.item(), done
                     )
     
+                    logger.debug(f"Agent {current_player} took action {UNOVocabulary.token_to_card_info(action_token)}")
+                    logger.debug(f"Stored reply for player {current_player} with reward {reward}. Valid: {info.get('valid', True)} | Hand size: {info.get('current_hand_size', 0)} | Previous hand size: {info.get('prev_hand_size', 0)}")
                     episode_reward += reward
     
                 episode_length += 1

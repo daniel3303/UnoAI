@@ -4,16 +4,14 @@ class RewardCalculator:
     def __init__(self):
         # Reward weights - easy to tune
         self.rewards = {
-            'win': 50.0,
+            'win': 10.0,
             'card_played': 1,
-            'card_drawn': -1,
-            'uno_achieved': 10.0,  # 1 card left
-            'close_to_uno': 3.0,   # 2 cards left
+            'card_drawn': -0.5,
+            'uno_achieved': 5.0,  # 1 card left
+            'close_to_uno': 1.0,   # 2 cards left
             'special_card_bonus': 0,
             'wild_card_bonus': 0,
-            'large_hand_penalty_per_card': -1,
-            'large_hand_threshold': 10,
-            'turn_penalty': -0.5,
+            'turn_penalty': -0.1,
             'invalid_action': -1,
         }
 
@@ -23,7 +21,7 @@ class RewardCalculator:
 
         # 1. Win condition (use environment reward)
         if env_reward > 0:
-            reward += self.rewards['win']
+            return self.rewards['win']
 
         # 2. Hand size changes
         prev_size = info.get('prev_hand_size', 0)
@@ -45,15 +43,10 @@ class RewardCalculator:
         elif current_size == 2:
             reward += self.rewards['close_to_uno']
 
-        # 4. Large hand penalty
-        if current_size > self.rewards['large_hand_threshold']:
-            excess_cards = current_size - self.rewards['large_hand_threshold']
-            reward += excess_cards * self.rewards['large_hand_penalty_per_card']
-
-        # 5. Turn penalty (encourage efficiency)
+        # 4. Turn penalty (encourage efficiency)
         reward += self.rewards['turn_penalty']
 
-        # 6. Invalid action penalty
+        # 5. Invalid action penalty
         if not info.get('valid', True):
             reward += self.rewards['invalid_action']
 
