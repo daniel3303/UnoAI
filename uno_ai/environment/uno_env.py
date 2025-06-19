@@ -13,7 +13,7 @@ from uno_ai.utils.asset_manager import AssetManager
 
 
 class UNOEnv(gym.Env):
-    def __init__(self, num_players: int = 4, game_mode:GameMode = GameMode.NORMAL, render_mode: Optional[str] = None):
+    def __init__(self, num_players: int = 4, game_mode:GameMode = GameMode.NORMAL, max_seq_len: int = 2048, render_mode: Optional[str] = None):
         super().__init__()
         self.num_players = num_players
         self.game_mode = game_mode
@@ -24,7 +24,6 @@ class UNOEnv(gym.Env):
         self.action_space = spaces.Discrete(UNOVocabulary.VOCAB_SIZE)
         
         # Observation space: sequence of tokens using same vocabulary
-        max_seq_len = 1000
         self.observation_space = spaces.Box(
             low=0, high=UNOVocabulary.VOCAB_SIZE - 1, shape=(max_seq_len,), dtype=np.int32
         )
@@ -320,7 +319,8 @@ class UNOEnv(gym.Env):
         # Pad to fixed length
         max_len = self.observation_space.shape[0]
         if len(tokens) > max_len:
-            tokens = tokens[:max_len]
+            # keeps the last max_len tokens (as the first tokens are the play history = less important)
+            tokens = tokens[-max_len:]
         else:
             tokens.extend([UNOVocabulary.PAD] * (max_len - len(tokens)))
     
