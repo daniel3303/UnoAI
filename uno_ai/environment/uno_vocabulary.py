@@ -86,8 +86,8 @@ class UNOVocabulary:
     NUMBER_START = 88
 
     # Special tokens
-    PAD = 98
-    SEP = 99
+    SEP = 98
+    PAD = 99
 
     VOCAB_SIZE = 100
 
