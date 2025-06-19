@@ -42,7 +42,8 @@ class MultiAgentPPOTrainer(PPOTrainer):
         self.episode_rewards = deque(maxlen=10)
         self.episode_lengths = deque(maxlen=10)
         self.episode_wins = deque(maxlen=10)
-        self.scenario_stats = {}
+        self.scenario_stats = {}  # This will track {scenario_name: {'episodes': [], 'wins': []}}
+
 
     def _create_agent(self, agent_id: int, is_primary: bool = False):
         """Create an agent instance"""
@@ -93,18 +94,17 @@ class MultiAgentPPOTrainer(PPOTrainer):
             # Sample training scenario
             scenario = self.training_config.sample_scenario()
             self._setup_scenario(scenario)
-    
-            # Track scenario usage
+
+            # Initialize scenario tracking if needed
             if scenario.name not in self.scenario_stats:
-                self.scenario_stats[scenario.name] = {'count': 0, 'wins': 0}
-            self.scenario_stats[scenario.name]['count'] += 1
-    
+                self.scenario_stats[scenario.name] = {'episodes': [], 'wins': []}
+
             obs, _ = self.env.reset()
             episode_reward = 0
             episode_length = 0
             consecutive_same_player = 0
             last_current_player = -1
-    
+
             for step in range(self.config.buffer_size):
                 if not self.env.game or self.env.game.game_over:
                     print("Game over or no game, resetting...")
@@ -185,26 +185,31 @@ class MultiAgentPPOTrainer(PPOTrainer):
     
                 episode_length += 1
                 obs = next_obs
-    
+
                 if done:
                     # Track wins for primary agent
                     winner = info.get('winner')
                     is_win = winner == self.primary_agent_id if winner is not None else False
+                
+                    # Record this episode for the current scenario
+                    self.scenario_stats[scenario.name]['episodes'].append(1)
+                    self.scenario_stats[scenario.name]['wins'].append(1 if is_win else 0)
+                
+                    # Also track in the general deques
                     self.episode_wins.append(1.0 if is_win else 0.0)
-    
-                    if is_win:
-                        if scenario.name not in self.scenario_stats:
-                            self.scenario_stats[scenario.name] = {'count': 0, 'wins': 0}
-                        self.scenario_stats[scenario.name]['wins'] += 1
-    
+                
                     self.buffer.finish_path(0)
                     self.episode_rewards.append(episode_reward)
                     self.episode_lengths.append(episode_length)
-    
+                
                     # Start new episode with potentially different scenario
                     scenario = self.training_config.sample_scenario()
                     self._setup_scenario(scenario)
-    
+                
+                    # Initialize new scenario if needed
+                    if scenario.name not in self.scenario_stats:
+                        self.scenario_stats[scenario.name] = {'episodes': [], 'wins': []}
+                
                     obs, _ = self.env.reset()
                     episode_reward = 0
                     episode_length = 0
@@ -266,7 +271,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                   f"Players: {self.current_num_players} | "
                   f"Reward: {avg_reward:6.2f} | Game Length: {avg_length:5.1f} | Win Rate: {win_rate:.3f}")
             
-            # Print scenario statistics every 20 updates
+            # Print scenario statistics every 40 updates
             if update_count % 40 == 0:
                 self._print_scenario_stats()
             
@@ -277,17 +282,23 @@ class MultiAgentPPOTrainer(PPOTrainer):
         """Print statistics for each training scenario"""
         print("\nScenario Statistics:")
         print("-" * 60)
-    
+
+        scenarios_player_counts = {s.num_players for s in self.training_config.scenarios}
+        
         # Group by player count
-        for player_count in [3, 4]:
+        for player_count in scenarios_player_counts:
             scenarios = self.training_config.get_scenarios_by_player_count(player_count)
             scenario_names = [s.name for s in scenarios]
-    
+
             if any(name in self.scenario_stats for name in scenario_names):
                 print(f"\n{player_count}-Player Games:")
                 for scenario_name in scenario_names:
                     if scenario_name in self.scenario_stats:
                         stats = self.scenario_stats[scenario_name]
-                        win_rate = stats['wins'] / max(stats['count'], 1) * 100
-                        print(f"  {scenario_name:25} | {stats['count']:3d} episodes | {win_rate:5.1f}% wins")
+                        total_episodes = len(stats['episodes'])
+                        total_wins = sum(stats['wins'])
+
+                        if total_episodes > 0:
+                            win_rate = (total_wins / total_episodes) * 100
+                            print(f"  {scenario_name:25} | {total_episodes:3d} episodes | {win_rate:5.1f}% wins")
         print()
