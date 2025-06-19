@@ -14,10 +14,12 @@ from uno_ai.training.reward_calculator import RewardCalculator
 
 
 class PPOBuffer:
-    def __init__(self, size: int, obs_dim: int, vocab_size: int):
+    def __init__(self, size: int, obs_dim: int, vocab_size: int, gamma: float = 0.99, gae_lambda: float = 0.95):
         self.size = size
         self.obs_dim = obs_dim
         self.vocab_size = vocab_size
+        self.gamma = gamma
+        self.gae_lambda = gae_lambda
         self.reset()
     
     def reset(self):
@@ -41,18 +43,16 @@ class PPOBuffer:
         self.dones[self.ptr] = done
         self.ptr += 1
         return True  # Successfully stored
-    
+
     def finish_path(self, last_value=0):
         """Calculate advantages and returns for the current trajectory"""
         path_slice = slice(self.path_start_idx, self.ptr)
         rewards = np.append(self.rewards[path_slice], last_value)
         values = np.append(self.values[path_slice], last_value)
     
-        # Calculate GAE advantages
-        deltas = rewards[:-1] + 0.99 * values[1:] - values[:-1]
-        advantages = self._discount_cumsum(deltas, 0.99 * 0.95)
+        deltas = rewards[:-1] + self.gamma * values[1:] - values[:-1]
+        advantages = self._discount_cumsum(deltas, self.gamma * self.gae_lambda)
     
-        # Calculate returns
         returns = advantages + self.values[path_slice]
     
         # Store advantages and returns

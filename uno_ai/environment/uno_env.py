@@ -230,38 +230,60 @@ class UNOEnv(gym.Env):
         return max_color if color_counts[max_color] > 0 else CardColor.RED
 
     def _get_observation(self) -> np.ndarray:
-        """Convert game state to observation tokens"""
+        """
+        Convert game state to observation tokens for the AI model.
+        
+        Token Sequence Format:
+        [PLAY_HISTORY] [PAD] [GAME_MODE] [CURRENT_PLAYER] [PLAYER_HANDS] [PAD] [CURRENT_HAND]
+        
+        Example Token Sequences:
+        
+        Game Start (Normal rules, Player 1's turn):
+        [PAD, NORMAL_MODE, NUM_1, OPPONENT, NUM_0, PAD, NUM_7, OPPONENT, NUM_1, PAD, NUM_7, OPPONENT, NUM_2, PAD, NUM_7, OPPONENT, NUM_3, PAD, NUM_7, PAD, RED_2, RED_SKIP, GREEN_3, BLUE_1, YELLOW_0, YELLOW_DRAW_TWO, WILD]
+        
+        Mid-Game (Street rules, with play history):
+        [OPPONENT, NUM_0, RED_DRAW_TWO, OPPONENT, NUM_1, BLUE_DRAW_TWO, PAD, STREET_MODE, NUM_2, OPPONENT, NUM_0, PAD, NUM_3, OPPONENT, NUM_1, PAD, NUM_5, OPPONENT, NUM_2, PAD, NUM_1, OPPONENT, NUM_3, PAD, NUM_6, PAD, GREEN_4, BLUE_DRAW_TWO, YELLOW_5]
+        
+        End Game (Player 0 about to win):
+        [OPPONENT, NUM_0, RED_5, OPPONENT, NUM_1, GREEN_3, OPPONENT, NUM_2, BLUE_1, PAD, NORMAL_MODE, NUM_0, OPPONENT, NUM_0, PAD, NUM_1, OPPONENT, NUM_1, PAD, NUM_5, OPPONENT, NUM_2, PAD, NUM_4, OPPONENT, NUM_3, PAD, NUM_6, PAD, WILD]
+        
+        The model learns from:
+        - Play history first (who played what cards in sequence)
+        - Game mode and current player context
+        - All players' hand sizes (strategic information)
+        - Current hand cards (available actions)
+        """
         tokens = []
     
         if self.game:
-            # The first token is always the game mode
-            game_mode_token = UNOVocabulary.game_mode_to_token(self.game.game_mode)
-            tokens.append(game_mode_token)
-    
-            # Current player number
-            current_player_tokens = UNOVocabulary.number_to_tokens(self.game.current_player)
-            tokens.extend(current_player_tokens)
-            tokens.append(UNOVocabulary.PAD)
-    
-            # Add all players' hand sizes using OPPONENT token format
-            for i in range(self.num_players):
-                tokens.append(UNOVocabulary.OPPONENT)
-                player_tokens = UNOVocabulary.number_to_tokens(i)
-                tokens.extend(player_tokens)
-                tokens.append(UNOVocabulary.PAD)
-    
-                hand_size = len(self.game.players_hands[i])
-                hand_size_tokens = UNOVocabulary.number_to_tokens(hand_size)
-                tokens.extend(hand_size_tokens)
-                tokens.append(UNOVocabulary.PAD)
-    
             # Card play history with player identification
             for player_id, card in self.game.discard_pile_with_players:
                 tokens.append(UNOVocabulary.OPPONENT)
                 player_tokens = UNOVocabulary.number_to_tokens(player_id)
                 tokens.extend(player_tokens)
                 tokens.append(self._card_to_token(card))
-            tokens.append(UNOVocabulary.PAD)
+            tokens.append(UNOVocabulary.SEP)    
+        
+            # After the card history add the game mode token
+            game_mode_token = UNOVocabulary.game_mode_to_token(self.game.game_mode)
+            tokens.append(game_mode_token)
+    
+            # Current player number
+            current_player_tokens = UNOVocabulary.number_to_tokens(self.game.current_player)
+            tokens.extend(current_player_tokens)
+    
+            # Add all players' hand sizes using OPPONENT token format
+            for i in range(self.num_players):
+                tokens.append(UNOVocabulary.OPPONENT)
+                player_tokens = UNOVocabulary.number_to_tokens(i)
+                tokens.extend(player_tokens)
+                tokens.append(UNOVocabulary.SEP)
+    
+                hand_size = len(self.game.players_hands[i])
+                hand_size_tokens = UNOVocabulary.number_to_tokens(hand_size)
+                tokens.extend(hand_size_tokens)
+
+            tokens.append(UNOVocabulary.SEP)
     
             # Add current player's hand
             current_player = self.game.current_player
