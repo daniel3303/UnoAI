@@ -3,6 +3,7 @@ from typing import Dict
 
 import numpy as np
 import torch
+from tqdm import tqdm
 
 from uno_ai.environment.multi_agent_uno_env import MultiAgentUNOEnv, OpponentConfig
 from uno_ai.model.uno_transformer import UNOTokens
@@ -208,29 +209,29 @@ class MultiAgentPPOTrainer(PPOTrainer):
         print(f"Total scenarios: {len(self.training_config.scenarios)}")
         print("-" * 80)
 
-        while timesteps_collected < total_timesteps:
-            self.collect_rollouts()
-            timesteps_collected += self.config.buffer_size
-
-            data = self.buffer.get()
-            losses = self.update_policy(data)
-            update_count += 1
-
-            # Log training progress with scenario stats
-            avg_reward = np.mean(self.episode_rewards) if self.episode_rewards else 0
-            avg_length = np.mean(self.episode_lengths) if self.episode_lengths else 0
-            win_rate = np.mean(self.episode_wins) if self.episode_wins else 0
-
-            print(f"Update {update_count:4d} | Steps: {timesteps_collected:8,}/{total_timesteps:,} | "
-                  f"Players: {self.current_num_players} | "
-                  f"Reward: {avg_reward:6.2f} | Length: {avg_length:5.1f} | WinRate: {win_rate:.3f}")
-
-            # Print scenario statistics every 20 updates
-            if update_count % 20 == 0:
-                self._print_scenario_stats()
-
-            if update_count % 10 == 0:
-                self.save_model(f"uno_multi_agent_model_update_{update_count}.pt")
+        with tqdm(total=total_timesteps, desc="Training Progress") as pbar:
+            while timesteps_collected < total_timesteps:
+                self.collect_rollouts()
+                timesteps_collected += self.config.buffer_size
+                pbar.update(self.config.buffer_size)
+        
+                data = self.buffer.get()
+                losses = self.update_policy(data)
+                update_count += 1
+        
+                avg_reward = np.mean(self.episode_rewards) if self.episode_rewards else 0
+                avg_length = np.mean(self.episode_lengths) if self.episode_lengths else 0
+                win_rate = np.mean(self.episode_wins) if self.episode_wins else 0
+        
+                print(f"Update {update_count:4d} | Steps: {timesteps_collected:8,}/{total_timesteps:,} | "
+                      f"Players: {self.current_num_players} | "
+                      f"Reward: {avg_reward:6.2f} | Length: {avg_length:5.1f} | WinRate: {win_rate:.3f}")
+        
+                if update_count % 20 == 0:
+                    self._print_scenario_stats()
+        
+                if update_count % 20 == 0:
+                    self.save_model(f"checkpoints/uno_multi_agent_model_update_{update_count}.pt")
 
 
     def _print_scenario_stats(self):
