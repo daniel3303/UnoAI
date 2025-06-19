@@ -6,7 +6,9 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+from uno_ai.agents.ppo_agent import PPOAgent
 from uno_ai.environment.uno_env import UNOEnv
+from uno_ai.environment.uno_vocabulary import UNOVocabulary
 from uno_ai.training.ppo_config import PPOConfig
 from uno_ai.training.reward_calculator import RewardCalculator
 
@@ -120,10 +122,11 @@ class PPOTrainer:
     def __init__(self, config: PPOConfig = PPOConfig()):
         self.config = config
         self.device = self._get_best_device()
-        self.vocab_size = UNOTokens.VOCAB_SIZE
+        self.vocab_size = UNOVocabulary.VOCAB_SIZE
 
-        # Initialize environment
-        self.env = UNOEnv(num_players=4, render_mode=None)
+        # Initialize environment with random game modes
+        from uno_ai.environment.uno_game import GameMode
+        self.env = UNOEnv(num_players=4, game_mode=GameMode.NORMAL, render_mode=None)
 
         # Initialize agent
         self.agent = PPOAgent(vocab_size=self.vocab_size).to(self.device)
@@ -137,9 +140,12 @@ class PPOTrainer:
         self.reward_calculator = RewardCalculator()
 
         # Training metrics
-        self.episode_rewards = deque(maxlen=1)
-        self.episode_lengths = deque(maxlen=1)
-        self.episode_wins = deque(maxlen=1)
+        self.episode_rewards = deque(maxlen=10)
+        self.episode_lengths = deque(maxlen=10)
+        self.episode_wins = deque(maxlen=10)
+
+        # Add agent position tracking
+        self.agent_player_id = 0  # Which player the agent is controlling
 
     def _get_best_device(self):
         """Select the best available device with MPS support"""
@@ -161,21 +167,29 @@ class PPOTrainer:
         return total_params
     
     def collect_rollouts(self):
-        """Collect rollouts for training with custom reward calculation"""
+        """Collect rollouts for training with custom reward calculation and random agent positions"""
+        import random
+        from uno_ai.environment.uno_game import GameMode
+    
+        # Randomly assign agent to different positions and game modes
+        self.agent_player_id = random.randint(0, 3)
+        game_mode = random.choice([GameMode.NORMAL, GameMode.STREET])
+    
+        # Reset environment with new configuration
+        self.env.game_mode = game_mode
         obs, _ = self.env.reset()
+    
         episode_reward = 0
         episode_length = 0
-        agent_episode_reward = 0  # Track agent-specific reward separately
+        agent_episode_reward = 0
     
         for _ in range(self.config.buffer_size):
             obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
     
             current_player = self.env.game.current_player
-    
-            # Always track episode length
             episode_length += 1
     
-            if current_player == 0:  # Agent's turn
+            if current_player == self.agent_player_id:  # Agent's turn
                 # Use environment's action mask method
                 action_mask, token_to_hand_index = self.env.create_action_mask(current_player)
                 action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
@@ -188,7 +202,7 @@ class PPOTrainer:
                 # Take step
                 next_obs, env_reward, terminated, truncated, info = self.env.step(action_token_item)
     
-                if info['valid'] is False:
+                if info.get('valid', True) is False:
                     env_reward += self.reward_calculator.rewards['invalid_action']
     
                 # Calculate custom reward based on game state
@@ -206,10 +220,9 @@ class PPOTrainer:
                 # Other players - use random/heuristic actions
                 valid_actions = self.env.get_valid_actions()
                 if valid_actions:
-                    import random
                     action_token = random.choice(valid_actions)
                 else:
-                    action_token = UNOTokens.DRAW_ACTION
+                    action_token = UNOVocabulary.DRAW_ACTION
     
                 next_obs, env_reward, terminated, truncated, info = self.env.step(action_token)
     
@@ -219,22 +232,26 @@ class PPOTrainer:
             obs = next_obs
     
             if done:
-                # Track wins
+                # Track wins for the agent
                 winner = info.get('winner')
-                is_win = winner == 0 if winner is not None else False  # Agent is player 0
+                is_win = winner == self.agent_player_id if winner is not None else False
                 self.episode_wins.append(1.0 if is_win else 0.0)
     
                 self.buffer.finish_path(0)
-                self.episode_rewards.append(agent_episode_reward)  # Use agent-specific reward
+                self.episode_rewards.append(agent_episode_reward)
                 self.episode_lengths.append(episode_length)
     
+                # Start new episode with new random position and game mode
+                self.agent_player_id = random.randint(0, 3)
+                game_mode = random.choice([GameMode.NORMAL, GameMode.STREET])
+                self.env.game_mode = game_mode
                 obs, _ = self.env.reset()
                 episode_reward = 0
                 episode_length = 0
                 agent_episode_reward = 0
     
             if self.buffer.ptr >= self.config.buffer_size:
-                if not done and current_player == 0:
+                if not done and current_player == self.agent_player_id:
                     obs_tensor = torch.tensor(obs, dtype=torch.long).unsqueeze(0).to(self.device)
                     action_mask, _ = self.env.create_action_mask(current_player)
                     action_mask_tensor = torch.tensor(action_mask, dtype=torch.bool).unsqueeze(0).to(self.device)
@@ -374,5 +391,5 @@ class PPOTrainer:
         checkpoint = torch.load(filepath, map_location=self.device, weights_only=False) # Allow more than weights because config claasses are also saved in the checkpoint
         self.agent.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.vocab_size = checkpoint.get('vocab_size', UNOTokens.VOCAB_SIZE)
+        self.vocab_size = checkpoint.get('vocab_size', UNOVocabulary.VOCAB_SIZE)
         print(f"Model loaded from {filepath}")

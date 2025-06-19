@@ -1,4 +1,5 @@
 import logging
+import random
 from collections import deque
 
 import numpy as np
@@ -6,7 +7,8 @@ import torch
 
 from uno_ai.agents.ppo_agent import PPOAgent
 from uno_ai.environment.multi_agent_uno_env import MultiAgentUNOEnv, OpponentConfig
-from uno_ai.model.vocabulary import UNOTokens
+from uno_ai.environment.uno_game import GameMode
+from uno_ai.environment.uno_vocabulary import UNOVocabulary
 from uno_ai.training.multi_agent_config import MultiAgentTrainingConfig, TrainingScenario
 from uno_ai.training.ppo_config import PPOConfig
 from uno_ai.training.ppo_trainer import PPOTrainer, PPOBuffer, RewardCalculator
@@ -19,7 +21,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
     def __init__(self, config: PPOConfig = PPOConfig()):
         # Initialize base trainer but replace environment
         super().__init__(config)
-        self.vocab_size = UNOTokens.VOCAB_SIZE
+        self.vocab_size = UNOVocabulary.VOCAB_SIZE
 
         # Use multi-agent environment
         self.current_num_players = 4  # Default
@@ -90,24 +92,31 @@ class MultiAgentPPOTrainer(PPOTrainer):
                 self._create_agent(player_id)
             self.env.add_trained_agent(player_id, self.agents[player_id])
 
-    
+
     def collect_rollouts(self):
-        """Enhanced rollout collection with scenario sampling and better error handling"""
+        """Enhanced rollout collection with scenario sampling and random agent positions"""
         try:
             # Sample training scenario
             scenario = self.training_config.sample_scenario()
             self._setup_scenario(scenario)
-
+    
+            # Randomly assign primary agent to different positions
+            self.primary_agent_id = random.choice(scenario.agent_players) if scenario.agent_players else random.randint(0, scenario.num_players - 1)
+    
+            # Randomly choose game mode
+            game_mode = random.choice([GameMode.NORMAL, GameMode.STREET])
+            self.env.game_mode = game_mode
+    
             # Initialize scenario tracking if needed
             if scenario.name not in self.scenario_stats:
                 self.scenario_stats[scenario.name] = {'episodes': [], 'wins': []}
-
+    
             obs, _ = self.env.reset()
             episode_reward = 0
             episode_length = 0
             consecutive_same_player = 0
             last_current_player = -1
-
+    
             for step in range(self.config.buffer_size):
                 if not self.env.game or self.env.game.game_over:
                     logger.debug("Game over or no game, resetting...")
@@ -148,8 +157,8 @@ class MultiAgentPPOTrainer(PPOTrainer):
                         buffer_action = action_token.item()
                     except Exception as e:
                         print(f"Error getting primary agent action: {e}")
-                        env_action = UNOTokens.DRAW_ACTION
-                        buffer_action = UNOTokens.DRAW_ACTION
+                        env_action = UNOVocabulary.DRAW_ACTION
+                        buffer_action = UNOVocabulary.DRAW_ACTION
     
                 else:
                     # Get action from appropriate opponent
@@ -157,7 +166,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
                         env_action = self.env.get_action_for_player(current_player, obs)
                     except Exception as e:
                         logger.debug(f"Error getting opponent action: {e}")
-                        env_action = UNOTokens.DRAW_ACTION
+                        env_action = UNOVocabulary.DRAW_ACTION
     
                     # Initialize variables to avoid reference errors
                     action_mask = None
@@ -188,33 +197,40 @@ class MultiAgentPPOTrainer(PPOTrainer):
     
                 episode_length += 1
                 obs = next_obs
-
+    
                 if done:
                     # Track wins for primary agent
                     winner = info.get('winner')
                     logger.debug(f"Winner is: {winner}")
                     is_win = winner == self.primary_agent_id if winner is not None else False
-                
+    
                     # Record this episode for the current scenario
                     self.scenario_stats[scenario.name]['episodes'].append(1)
                     self.scenario_stats[scenario.name]['wins'].append(1 if is_win else 0)
-                
+    
                     # Also track in the general deques
                     self.episode_wins.append(1.0 if is_win else 0.0)
-                
+    
                     self.buffer.finish_path(0)
                     self.episode_rewards.append(episode_reward)
                     self.episode_lengths.append(episode_length)
-                
-                    # Start new episode with potentially different scenario
+    
+                    # Start new episode with potentially different scenario and agent position
                     scenario = self.training_config.sample_scenario()
                     self._setup_scenario(scenario)
-                
+    
+                    # Randomly assign primary agent to different positions
+                    self.primary_agent_id = random.choice(scenario.agent_players) if scenario.agent_players else random.randint(0, scenario.num_players - 1)
+    
+                    # Randomly choose game mode
+                    self.env.game_mode = game_mode
+    
                     # Initialize new scenario if needed
                     if scenario.name not in self.scenario_stats:
                         self.scenario_stats[scenario.name] = {'episodes': [], 'wins': []}
-                
-                    obs, _ = self.env.reset()
+    
+                    game_mode = random.choice([GameMode.NORMAL, GameMode.STREET])
+                    obs, _ = self.env.reset(game_mode=game_mode)
                     episode_reward = 0
                     episode_length = 0
     
