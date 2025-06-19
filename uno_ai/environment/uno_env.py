@@ -13,7 +13,7 @@ from uno_ai.utils.asset_manager import AssetManager
 
 
 class UNOEnv(gym.Env):
-    def __init__(self, num_players: int = 4, game_mode:GameMode = GameMode.NORMAL, max_seq_len: int = 2048, render_mode: Optional[str] = None):
+    def __init__(self, num_players: int = 4, game_mode:GameMode = GameMode.NORMAL, max_seq_len: int = 1024, render_mode: Optional[str] = None):
         super().__init__()
         self.num_players = num_players
         self.game_mode = game_mode
