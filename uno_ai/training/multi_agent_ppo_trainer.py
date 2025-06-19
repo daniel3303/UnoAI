@@ -117,7 +117,7 @@ class MultiAgentPPOTrainer(PPOTrainer):
             consecutive_same_player = 0
             last_current_player = -1
     
-            for step in range(self.config.buffer_size):
+            while self.buffer.ptr < self.config.buffer_size:
                 if not self.env.game or self.env.game.game_over:
                     logger.debug("Game over or no game, resetting...")
                     obs, _ = self.env.reset()
@@ -167,12 +167,6 @@ class MultiAgentPPOTrainer(PPOTrainer):
                     except Exception as e:
                         logger.debug(f"Error getting opponent action: {e}")
                         env_action = UNOVocabulary.DRAW_ACTION
-    
-                    # Initialize variables to avoid reference errors
-                    action_mask = None
-                    buffer_action = None
-                    value = None
-                    log_prob = None
     
                 # Take step
                 try:
@@ -236,7 +230,12 @@ class MultiAgentPPOTrainer(PPOTrainer):
                     episode_reward = 0
                     episode_length = 0
     
+                logger.debug(f"Game mode: {game_mode}, Current player: {current_player}, "
+                             f"Episode reward: {episode_reward}, Episode length: {episode_length}, "
+                             f"Buffer size: {self.buffer.ptr}/{self.config.buffer_size}")
+                
                 if self.buffer.ptr >= self.config.buffer_size:
+                    logger.debug("Buffer full, finishing path for primary agent")
                     # Store current episode metrics even if not done
                     if episode_reward != 0 or episode_length > 0:
                         self.episode_rewards.append(episode_reward)
