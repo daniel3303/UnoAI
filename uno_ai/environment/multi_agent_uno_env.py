@@ -20,7 +20,7 @@ class  OpponentConfig:
     env_players: List[int]    # Which players use environment logic
 
 class MultiAgentUNOEnv(UNOEnv):
-    def __init__(self, num_players: int = 4, game_mode: GameMode = GameMode.NORMAL, max_seq_len: int = 1024, render_mode: Optional[str] = None):
+    def __init__(self, num_players: int = 4, game_mode: GameMode = GameMode.NORMAL, max_seq_len: int = 512, render_mode: Optional[str] = None):
         super().__init__(num_players, game_mode, max_seq_len, render_mode)
         self.opponent_config: Optional[OpponentConfig] = None
         self.trained_agents: Dict[int, Any] = {}  # Store multiple agent instances
