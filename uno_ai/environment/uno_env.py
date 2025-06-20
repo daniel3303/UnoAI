@@ -23,6 +23,7 @@ class UNOEnv(gym.Env):
         # Use token-based action space
         self.action_space = spaces.Discrete(UNOVocabulary.VOCAB_SIZE)
         
+    
         # Observation space: sequence of tokens using same vocabulary
         self.observation_space = spaces.Box(
             low=0, high=UNOVocabulary.VOCAB_SIZE - 1, shape=(max_seq_len,), dtype=np.int32

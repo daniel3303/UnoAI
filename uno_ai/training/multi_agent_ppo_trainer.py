@@ -1,5 +1,6 @@
 import logging
 import random
+from typing import Optional
 
 import numpy as np
 import torch
@@ -16,14 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 class MultiAgentPPOTrainer(PPOTrainer):
-    def __init__(self, config: PPOConfig = PPOConfig()):
-        # Initialize base trainer but replace environment
-        super().__init__(config)
+    def __init__(self, config: PPOConfig = PPOConfig(), env: Optional[MultiAgentUNOEnv] = None):
+        super().__init__(config, env or MultiAgentUNOEnv(num_players=4, render_mode=None))
         self.vocab_size = UNOVocabulary.VOCAB_SIZE
 
         # Use multi-agent environment
         self.current_num_players = 4  # Default
-        self.env = MultiAgentUNOEnv(num_players=self.current_num_players, render_mode=None)
 
         # Training configuration
         self.training_config = MultiAgentTrainingConfig()
