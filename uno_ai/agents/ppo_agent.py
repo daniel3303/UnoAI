@@ -8,7 +8,7 @@ from uno_ai.layers.transformer_block import TransformerBlock
 
 
 class PPOAgent(nn.Module):
-    def __init__(self, vocab_size: int = UNOVocabulary.VOCAB_SIZE, dim: int = 256, n_layers: int = 8, n_heads: int = 4):
+    def __init__(self, vocab_size: int = UNOVocabulary.VOCAB_SIZE, dim: int = 512, n_layers: int = 16, n_heads: int = 4):
         super().__init__()
         self.dim = dim
         self.vocab_size = vocab_size
