@@ -11,7 +11,7 @@ class RewardCalculator:
             'close_to_uno': 1.0,   # 2 cards left
             'special_card_bonus': 0,
             'wild_card_bonus': 0,
-            'turn_penalty': -1,
+            'turn_penalty': -0.1,
             'invalid_action': -1,
         }
 
